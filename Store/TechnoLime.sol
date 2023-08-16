@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity >=0.7.0 <0.9.0;
 
-import {Owner} from "contracts/Owner.sol";
-import {IStore} from "contracts/interfaces/IStore.sol";
+import {Owner} from "/Owner.sol";
+import {IStore} from "/interfaces/IStore.sol";
 
 
 /*
@@ -33,17 +33,26 @@ contract Store is Owner, IStore{
 
     // Key is the id of the product and the value is the availability in the shop.
     mapping(string => uint256) public productAvailability;
+    // Key is the id of the product which is pointing on an existing instance with valid data.
+    mapping(string => Product) private productProperties;
     Product[] productsInShop;
-    mapping(address => Purchase[]) public clientPurchases;
+
+    // The mapping key is user address and the value a mapping in which the key is the id of the product
+    // and the value is the timeblock in which he has purchased the product (When it is zero, the client has not bought this product)
+    mapping(address => mapping(string => uint256)) public clientPurchases;
+
+    // The mapping holds information wether user has returned given product.
+    mapping(address => mapping(string => bool)) private hasReturned; 
     address[] public buyers;
     
-  
     constructor()Owner(){}
 
     function createProductOrAddQuantity(string calldata productId, uint256 quantity, uint256 price) onlyOwner external{
-        if(findProductIndex(productId) == -1){
+        if(productProperties[productId].id.compare("")){
             Product memory product =  Product(productId, price);
+            productProperties[productId] = product;
             productsInShop.push(product);
+
             emit ProductAdded(productId, quantity);
         }
         else{
@@ -53,82 +62,53 @@ contract Store is Owner, IStore{
     }
 
 
-    function buyProduct(string calldata productId, uint256 quantity) payable external{
+    function buyProduct(string calldata productId) payable external{
         // ------ Checks
-        int productIndex = findProductIndex(productId);
-        if(productIndex == -1) revert ProductNotFound(productId);
-        require(quantity <= productAvailability[productId], "Not enough quantity") ;
+        
+        if(productProperties[productId].id.compare("")) revert ProductNotFound(productId);
+        require(productAvailability[productId] > 0 , "Not enough quantity") ;
         // Haven't buy the same product before
-        require(findPurchaseIndex(productId, msg.sender) == -1, "Cannot buy tha same product twise");
+        require(clientPurchases[msg.sender][productId] == 0, "Cannot buy tha same product twise");
 
-        uint256 totalPrice = productsInShop[uint(productIndex)].price * quantity;
-        require(totalPrice <= msg.value,"Not enough money");
+        uint256 price = productProperties[productId].price;
+        require(price <= msg.value,"Not enough money");
         
         // ------ Change state variables
-        productAvailability[productId] -= quantity;
-        Purchase memory purchase = Purchase(block.number, productId, quantity, 0, totalPrice);
-        clientPurchases[msg.sender].push(purchase);
-        buyers.push(msg.sender);
+        --productAvailability[productId];
 
-        emit ProductHasBeenSold(productId, msg.sender, quantity);
+        clientPurchases[msg.sender][productId] = block.number;
+        buyers.push(msg.sender);
+         // Return rest of the provided funds to the user.
+        payable(msg.sender).transfer(productProperties[productId].price - msg.value);
+
+
+        emit ProductHasBeenSold(productId, msg.sender);
     }
 
     
-    function returnProduct(string calldata productId, uint256 quantity) external{
+    function returnProduct(string calldata productId) external{
         // Check if msg.sender has purchased this product.
-        int256 purchaseId = findPurchaseIndex(productId, msg.sender);
         // Here we have invariant of always valid product
         // If the productId is invalid or wrong, the below check will fail.
-        require(purchaseId != -1, "User haven't purchased this product.");
+        uint256 purchasedBlock = clientPurchases[msg.sender][productId];
+        require(purchasedBlock != 0, "The product has never bought");
         // Check if the quantity which he is trying to return is not more than the purchased.
-        Purchase memory purchase = clientPurchases[msg.sender][uint256(purchaseId)];
-        require(quantity <= purchase.quantity - purchase.returnedQuantity, "Trying to return more than have bought");
+       
+        require(!hasReturned[msg.sender][productId], "User has already returned the given stock");
         // Check the block number. Less than 100 blocks from the one, in which the product was purchased.
-        require(block.number - purchase.blocktime >= 0, "More than 100 blocks has passed from the purchase.");
+        require(block.number - purchasedBlock >= 0, "More than 100 blocks has passed from the purchase.");
         // Change state variables (Upgrade product in shop, upgrade returned quantity for the Purchase).
 
-        clientPurchases[msg.sender][uint256(purchaseId)].returnedQuantity = quantity;
-        productAvailability[productId] += quantity;
+        ++productAvailability[productId];
+        hasReturned[msg.sender][productId] = true;
+        // Return the money to the buyer.
+        payable(msg.sender).transfer(productProperties[productId].price);
 
-        emit ProductHasBeenReturned(productId, msg.sender, quantity);
+        emit ProductHasBeenReturned(productId, msg.sender);
     }
 
     function seeProductsInShop() view external returns(Product[] memory){
-        uint256 productsCount = productsInShop.length;
-        Product[] memory result = new Product[](productsCount);
-
-        // Counter to be used, so there are no gaps in the array.
-        uint256 counter = 0;
-        for(uint i = 0; i < productsInShop.length; ++i){      
-            Product memory currentProduct = productsInShop[i];
-            if(productAvailability[currentProduct.id] > 0){
-                result[counter] = currentProduct;
-                ++counter;
-            }       
-        }
-        return result;
-    }
-
-    // Find a product in the array of products if it exist an return it's index. Otherwise returns -1.
-    function findProductIndex(string calldata name) private view returns (int){
-        for(uint i = 0; i< productsInShop.length;++i){
-            if(name.compare(productsInShop[i].id)){
-                return int(i);
-            }
-        }
-        return -1;
-    }
-
-    // Find a purchase in the array of purchases if it exist an return it's index. Otherwise returns -1.
-    function findPurchaseIndex(string calldata productName, address buyer) private view returns (int){
-        Purchase[] memory purchases = clientPurchases[buyer];
-
-        for(uint i = 0; i < purchases.length; ++i){
-            if(productName.compare(purchases[i].productId)){
-                return int(i);
-            }
-        }
-        return -1;
+        return productsInShop;
     }
 
     function getBuyers() external view returns (address[] memory){
