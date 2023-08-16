@@ -30,10 +30,12 @@ contract Store is Owner, IStore{
 
     error ProductNotFound(string productName);
 
+
     // Key is the id of the product and the value is the availability in the shop.
-    mapping(string => uint256) productAvailability;
+    mapping(string => uint256) public productAvailability;
     Product[] productsInShop;
     mapping(address => Purchase[]) public clientPurchases;
+    address[] public buyers;
     
   
     constructor()Owner(){}
@@ -42,9 +44,12 @@ contract Store is Owner, IStore{
         if(findProductIndex(productId) == -1){
             Product memory product =  Product(productId, price);
             productsInShop.push(product);
+            emit ProductAdded(productId, quantity);
+        }
+        else{
+            emit ProductQuantityAdded(productId, quantity);
         }
         productAvailability[productId] += quantity;
-        emit ProductAdded(productId, quantity);
     }
 
 
@@ -52,31 +57,56 @@ contract Store is Owner, IStore{
         // ------ Checks
         int productIndex = findProductIndex(productId);
         if(productIndex == -1) revert ProductNotFound(productId);
-        require(quantity > productAvailability[productId], "Not enough quantity") ;
+        require(quantity <= productAvailability[productId], "Not enough quantity") ;
         // Haven't buy the same product before
-        require(findPurchaseIndex(productId, msg.sender) != -1, "Cannot buy tha same product twise");
+        require(findPurchaseIndex(productId, msg.sender) == -1, "Cannot buy tha same product twise");
 
         uint256 totalPrice = productsInShop[uint(productIndex)].price * quantity;
         require(totalPrice <= msg.value,"Not enough money");
         
         // ------ Change state variables
         productAvailability[productId] -= quantity;
-        Purchase memory purchase = Purchase(block.number, productId, quantity);
+        Purchase memory purchase = Purchase(block.number, productId, quantity, 0, totalPrice);
         clientPurchases[msg.sender].push(purchase);
+        buyers.push(msg.sender);
 
         emit ProductHasBeenSold(productId, msg.sender, quantity);
     }
 
-    function returnProduct(string calldata productId) external{
+    
+    function returnProduct(string calldata productId, uint256 quantity) external{
+        // Check if msg.sender has purchased this product.
+        int256 purchaseId = findPurchaseIndex(productId, msg.sender);
+        // Here we have invariant of always valid product
+        // If the productId is invalid or wrong, the below check will fail.
+        require(purchaseId != -1, "User haven't purchased this product.");
+        // Check if the quantity which he is trying to return is not more than the purchased.
+        Purchase memory purchase = clientPurchases[msg.sender][uint256(purchaseId)];
+        require(quantity <= purchase.quantity - purchase.returnedQuantity, "Trying to return more than have bought");
+        // Check the block number. Less than 100 blocks from the one, in which the product was purchased.
+        require(block.number - purchase.blocktime >= 0, "More than 100 blocks has passed from the purchase.");
+        // Change state variables (Upgrade product in shop, upgrade returned quantity for the Purchase).
 
+        clientPurchases[msg.sender][uint256(purchaseId)].returnedQuantity = quantity;
+        productAvailability[productId] += quantity;
+
+        emit ProductHasBeenReturned(productId, msg.sender, quantity);
     }
 
-    function seeAvailableProducts() view external returns(Product[] memory){
+    function seeProductsInShop() view external returns(Product[] memory){
+        uint256 productsCount = productsInShop.length;
+        Product[] memory result = new Product[](productsCount);
 
-    }
-
-    function checkAvailability(address buyer) private view {
-
+        // Counter to be used, so there are no gaps in the array.
+        uint256 counter = 0;
+        for(uint i = 0; i < productsInShop.length; ++i){      
+            Product memory currentProduct = productsInShop[i];
+            if(productAvailability[currentProduct.id] > 0){
+                result[counter] = currentProduct;
+                ++counter;
+            }       
+        }
+        return result;
     }
 
     // Find a product in the array of products if it exist an return it's index. Otherwise returns -1.
@@ -99,5 +129,9 @@ contract Store is Owner, IStore{
             }
         }
         return -1;
+    }
+
+    function getBuyers() external view returns (address[] memory){
+        return buyers;
     }
 }
