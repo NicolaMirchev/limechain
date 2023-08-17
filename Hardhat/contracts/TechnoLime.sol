@@ -73,7 +73,7 @@ contract Store is Owner, IStore{
         clientPurchases[msg.sender][productId] = block.number;
         buyers.push(msg.sender);
          // Return rest of the provided funds to the user.
-        payable(msg.sender).transfer(productProperties[productId].price - msg.value);
+        payable(msg.sender).transfer(msg.value - price);
 
 
         emit ProductHasBeenSold(productId, msg.sender);
