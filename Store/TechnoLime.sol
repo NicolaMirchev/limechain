@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity >=0.7.0 <0.9.0;
 
-import {Owner} from "/Owner.sol";
-import {IStore} from "/interfaces/IStore.sol";
+import {Owner} from "./Owner.sol";
+import {IStore} from "./interfaces/IStore.sol";
 
 
 /*
@@ -15,7 +15,12 @@ import {IStore} from "/interfaces/IStore.sol";
 - Everyone should be able to see the addresses of all clients that have ever bought a given product.
 */
 
-// String comparator library to check whether a string matches other string.
+
+/** 
+ * @notice  . Library providin string comparison functionallity
+ * @author  . Nikola Mirchev
+ * @dev     .
+ */
 library StringComparator{
     function compare(string memory str1, string memory str2) public pure returns (bool) {
        if (bytes(str1).length != bytes(str2).length) {
@@ -25,31 +30,34 @@ library StringComparator{
     }
 }
 
+/**
+ * @author  . Nikola Mirchev
+ * @notice  . Store contract provide logic for buying products from end users using native currency of the blockchain (eth)
+ */
+
 contract Store is Owner, IStore{     
     using StringComparator for string;
 
     error ProductNotFound(string productName);
 
 
-    // Key is the id of the product and the value is the availability in the shop.
+    /// @dev Key is the id of the product and the value is the availability in the shop.
     mapping(string => uint256) public productAvailability;
-    // Key is the id of the product which is pointing on an existing instance with valid data.
-    mapping(string => Product) private productProperties;
-    Product[] productsInShop;
-
-    // The mapping key is user address and the value a mapping in which the key is the id of the product
-    // and the value is the timeblock in which he has purchased the product (When it is zero, the client has not bought this product)
+    /// @dev The mapping key is user address and the value a mapping in which the key is the id of the product
+    /// and the value is the timeblock in which he has purchased the product (When it is zero, the client has not bought this product)
     mapping(address => mapping(string => uint256)) public clientPurchases;
-
-    // The mapping holds information wether user has returned given product.
+    /// @dev Key is the id of the product which is pointing on an existing instance with valid data.
+    mapping(string => Product) private productProperties;
+    /// @dev The mapping holds information whether user has returned given product.
     mapping(address => mapping(string => bool)) private hasReturned; 
+
     address[] public buyers;
-    
+    Product[] public productsInShop;
     constructor()Owner(){}
 
     function createProductOrAddQuantity(string calldata productId, uint256 quantity, uint256 price) onlyOwner external{
         if(productProperties[productId].id.compare("")){
-            Product memory product =  Product(productId, price);
+            Product memory product =  Product(productId, price); 
             productProperties[productId] = product;
             productsInShop.push(product);
 
@@ -63,7 +71,7 @@ contract Store is Owner, IStore{
 
 
     function buyProduct(string calldata productId) payable external{
-        // ------ Checks
+        /// ------ Checks
         
         if(productProperties[productId].id.compare("")) revert ProductNotFound(productId);
         require(productAvailability[productId] > 0 , "Not enough quantity") ;
@@ -73,12 +81,12 @@ contract Store is Owner, IStore{
         uint256 price = productProperties[productId].price;
         require(price <= msg.value,"Not enough money");
         
-        // ------ Change state variables
+        /// ------ Change state variables
         --productAvailability[productId];
 
         clientPurchases[msg.sender][productId] = block.number;
         buyers.push(msg.sender);
-         // Return rest of the provided funds to the user.
+         /// @dev Return rest of the provided funds to the user.
         payable(msg.sender).transfer(productProperties[productId].price - msg.value);
 
 
@@ -87,9 +95,9 @@ contract Store is Owner, IStore{
 
     
     function returnProduct(string calldata productId) external{
-        // Check if msg.sender has purchased this product.
-        // Here we have invariant of always valid product
-        // If the productId is invalid or wrong, the below check will fail.
+        /// Checks if msg.sender has purchased this product.
+        /// Here we have invariant of always valid product
+        /// If the productId is invalid or wrong, the below check will fail.
         uint256 purchasedBlock = clientPurchases[msg.sender][productId];
         require(purchasedBlock != 0, "The product has never bought");
         // Check if the quantity which he is trying to return is not more than the purchased.
