@@ -24,13 +24,9 @@ contract Store is Owner, IStore{
 
     error ProductNotFound(string productName);
 
-
-    // Key is the id of the product and the value is the availability in the shop.
-    mapping(string => uint256) public productAvailability;
     // Key is the id of the product which is pointing on an existing instance with valid data.
-    mapping(string => Product) private productProperties;
-    Product[] productsInShop;
-
+    mapping(string => Product) public productProperties;
+  
     // The mapping key is user address and the value a mapping in which the key is the id of the product
     // and the value is the timeblock in which he has purchased the product (When it is zero, the client has not bought this product)
     mapping(address => mapping(string => uint256)) public clientPurchases;
@@ -38,43 +34,43 @@ contract Store is Owner, IStore{
     // The mapping holds information wether user has returned given product.
     mapping(address => mapping(string => bool)) private hasReturned; 
     address[] public buyers;
+    // Ids of of the products in the mapping
+    string[] private productsInShop;
     
     constructor()Owner(){}
 
     function createProductOrAddQuantity(string calldata productId, uint256 quantity, uint256 price) onlyOwner external{
         if(productProperties[productId].id.compare("")){
-            Product memory product =  Product(productId, price);
+            Product memory product =  Product(productId, price, quantity);
             productProperties[productId] = product;
-            productsInShop.push(product);
+            productsInShop.push(productId);
 
             emit ProductAdded(productId, quantity);
         }
         else{
             emit ProductQuantityAdded(productId, quantity);
+            productProperties[productId].quantity += quantity;
         }
-        productAvailability[productId] += quantity;
     }
 
 
     function buyProduct(string calldata productId) payable external{
         // ------ Checks
+        Product memory product = productProperties[productId];
         
-        if(productProperties[productId].id.compare("")) revert ProductNotFound(productId);
-        require(productAvailability[productId] > 0 , "Not enough quantity") ;
+        if(product.id.compare("")) revert ProductNotFound(productId);
+        require(product.quantity > 0 , "Not enough quantity");
         // Haven't buy the same product before
         require(clientPurchases[msg.sender][productId] == 0, "Cannot buy tha same product twise");
-
-        uint256 price = productProperties[productId].price;
-        require(price <= msg.value,"Not enough money");
+        require(product.price <= msg.value,"Not enough money");
         
         // ------ Change state variables
-        --productAvailability[productId];
+        --productProperties[productId].quantity;
 
         clientPurchases[msg.sender][productId] = block.number;
         buyers.push(msg.sender);
          // Return rest of the provided funds to the user.
-        payable(msg.sender).transfer(msg.value - price);
-
+        payable(msg.sender).transfer(msg.value - product.price);
 
         emit ProductHasBeenSold(productId, msg.sender);
     }
@@ -88,12 +84,12 @@ contract Store is Owner, IStore{
         require(purchasedBlock != 0, "The product has never bought");
         // Check if the quantity which he is trying to return is not more than the purchased.
        
-        require(!hasReturned[msg.sender][productId], "User has already returned the given stock");
+        require(!hasReturned[msg.sender][productId], "Client has already returned the given stock");
         // Check the block number. Less than 100 blocks from the one, in which the product was purchased.
-        require(block.number - purchasedBlock >= 0, "More than 100 blocks has passed from the purchase.");
+        require(block.number - purchasedBlock < 100, "More than 100 blocks has passed from the purchase");
         // Change state variables (Upgrade product in shop, upgrade returned quantity for the Purchase).
 
-        ++productAvailability[productId];
+        ++productProperties[productId].quantity;
         hasReturned[msg.sender][productId] = true;
         // Return the money to the buyer.
         payable(msg.sender).transfer(productProperties[productId].price);
@@ -102,10 +98,24 @@ contract Store is Owner, IStore{
     }
 
     function seeProductsInShop() view external returns(Product[] memory){
-        return productsInShop;
+        uint256 productsCount = getProductsCount();
+        Product[] memory products = new Product[](productsCount);
+        for(uint256 i = 0; i < productsCount; ++i){
+            products[i] = getProductAtIndex(i);
+        }
+        return products;
     }
 
     function getBuyers() external view returns (address[] memory){
         return buyers;
     }
+
+    function getProductsCount() view public returns(uint256){
+        return productsInShop.length;
+    }
+    function getProductAtIndex(uint256 index) view public returns(Product memory){
+        return productProperties[productsInShop[index]];
+    }
+
+ 
 }
