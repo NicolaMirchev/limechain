@@ -5,10 +5,8 @@ import {
 import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { Store, Store } from "../typechain-types/TechnoLime.sol";
-import { IERC20, LimeToken } from "../typechain-types";
-
-type StoreAndTokenTuple = [Store, LimeToken];
+import { Store } from "../typechain-types/TechnoLime.sol";
+import { IERC20, LimeTokenERC20 } from "../typechain-types";
 
 describe("Store", function () {
   const bike = "bike";
@@ -16,7 +14,7 @@ describe("Store", function () {
   const ball = "ball";
 
   let store: Store;
-  let limeToken: LimeToken;
+  let limeToken: LimeTokenERC20;
 
   async function deployEmptyStoreFixture() {
     const comparatorLib = await ethers.deployContract("StringComparator");
@@ -43,7 +41,7 @@ describe("Store", function () {
   }
 
   async function deployLimeTokenAndMintTokensToUser() {
-    limeToken = await ethers.deployContract("LimeToken");
+    limeToken = await ethers.deployContract("LimeTokenERC20");
     (await limeToken).waitForDeployment();
     const [owner, user] = await ethers.getSigners();
 

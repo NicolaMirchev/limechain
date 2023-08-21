@@ -12,7 +12,7 @@ import {Owner} from "./Owner.sol";
  * @notice  . The contract implements ERC20 interface and it is used as a currency to purchase stock from the TechnoLime Store.
  */
 
-contract LimeToken is ERC20, Owner { 
+contract LimeTokenERC20 is ERC20, Owner { 
     constructor()Owner() ERC20("LimeToken", "LMT") {}
 
     /**
