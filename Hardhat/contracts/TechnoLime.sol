@@ -84,7 +84,6 @@ contract Store is Owner, IStore{
 
         clientPurchases[msg.sender][productId] = block.number;
         buyers.push(msg.sender);
-        /// @dev Return rest of the provided funds to the user.
         (bool success) = tokenContract.transferFrom(msg.sender, address(this), product.price);
         require(success, "Token transfer has failed!");
 
