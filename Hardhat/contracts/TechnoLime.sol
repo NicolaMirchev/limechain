@@ -4,6 +4,7 @@ pragma solidity >=0.7.0 <0.9.0;
 import {Owner} from "./Owner.sol";
 import {IStore} from "./interfaces/IStore.sol";
 import {StringComparator} from "./libraries/StringComparator.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 
 
@@ -45,9 +46,11 @@ contract Store is Owner, IStore{
     address[] public buyers;
     /// @dev Ids of of the products in the mapping
     string[] private productsInShop;
+
+    IERC20 public immutable tokenContract;
     
-    constructor()Owner(){
-        /// @dev empty construtor, because we are using only the parent(owner) initializations. 
+    constructor(address tokenAddress)Owner(){
+        tokenContract = IERC20(tokenAddress);
     }
 
     function createProductOrAddQuantity(string calldata productId, uint256 quantity, uint256 price) onlyOwner external{
@@ -65,7 +68,7 @@ contract Store is Owner, IStore{
     }
 
 
-    function buyProduct(string calldata productId) payable external{
+    function buyProduct(string calldata productId) external{
         /// ------ Checks
         Product memory product = productProperties[productId];
         
@@ -73,7 +76,8 @@ contract Store is Owner, IStore{
         require(product.quantity > 0 , "Not enough quantity");
         /// @dev Haven't buy the same product before
         require(clientPurchases[msg.sender][productId] == 0, "Cannot buy tha same product twise");
-        require(product.price <= msg.value,"Not enough money");
+
+        require(tokenContract.allowance(msg.sender, address(this)) >= product.price ,"Not enough money");
         
         /// ------ Change state variables
         --productProperties[productId].quantity;
@@ -81,7 +85,8 @@ contract Store is Owner, IStore{
         clientPurchases[msg.sender][productId] = block.number;
         buyers.push(msg.sender);
         /// @dev Return rest of the provided funds to the user.
-        payable(msg.sender).transfer(msg.value - product.price);
+        (bool success) = tokenContract.transferFrom(msg.sender, address(this), product.price);
+        require(success, "Token transfer has failed!");
 
         emit ProductHasBeenSold(productId, msg.sender);
     }
@@ -104,8 +109,10 @@ contract Store is Owner, IStore{
 
         ++productProperties[productId].quantity;
         hasReturned[msg.sender][productId] = true;
-        /// @dev Return the money to the buyer.
-        payable(msg.sender).transfer(productProperties[productId].price);
+        /// @dev Return the money to the buyer. 80% of the value.
+        uint256 returnValue = productProperties[productId].price * 80 / 100;
+        tokenContract.transfer(msg.sender, returnValue);
+
 
         emit ProductHasBeenReturned(productId, msg.sender);
     }

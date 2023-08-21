@@ -5,26 +5,36 @@ import {
 import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { libraries } from "../typechain-types";
+import { Store, Store } from "../typechain-types/TechnoLime.sol";
+import { IERC20, LimeToken } from "../typechain-types";
+
+type StoreAndTokenTuple = [Store, LimeToken];
 
 describe("Store", function () {
   const bike = "bike";
   const book = "book";
   const ball = "ball";
 
+  let store: Store;
+  let limeToken: LimeToken;
+
   async function deployEmptyStoreFixture() {
     const comparatorLib = await ethers.deployContract("StringComparator");
     await comparatorLib.waitForDeployment();
+    await loadFixture(deployLimeTokenAndMintTokensToUser);
 
-    const store = ethers.deployContract("Store", {
-      libraries: { StringComparator: await comparatorLib.getAddress() },
-    });
-
-    return store;
+    store = await ethers.deployContract(
+      "Store",
+      [(await limeToken).getAddress()],
+      {
+        libraries: { StringComparator: await comparatorLib.getAddress() },
+      }
+    );
   }
 
   async function fillStoreWithProducts() {
-    const store = await loadFixture(deployEmptyStoreFixture);
+    await loadFixture(deployEmptyStoreFixture);
+
     await store.createProductOrAddQuantity(bike, 5, 2000);
     await store.createProductOrAddQuantity(ball, 10, 500);
     await store.createProductOrAddQuantity(book, 2, 550);
@@ -32,9 +42,17 @@ describe("Store", function () {
     return store;
   }
 
+  async function deployLimeTokenAndMintTokensToUser() {
+    limeToken = await ethers.deployContract("LimeToken");
+    (await limeToken).waitForDeployment();
+    const [owner, user] = await ethers.getSigners();
+
+    (await limeToken).mint(user, 5000);
+  }
+
   describe("Actions", async function () {
     it("Should be deployed successfully and the owner is the deployer", async function () {
-      const store = await loadFixture(deployEmptyStoreFixture);
+      await loadFixture(deployEmptyStoreFixture);
 
       expect(await store.owner()).equals(
         (await ethers.provider.getSigner()).address
@@ -43,7 +61,7 @@ describe("Store", function () {
 
     context("Manager interactions with the store contract", async function () {
       it("Should be possible owner to add products. When product exists, only it's quantity is changed", async function () {
-        const store = await loadFixture(deployEmptyStoreFixture);
+        await loadFixture(deployEmptyStoreFixture);
 
         // -- Before adding
         expect((await store.seeProductsInShop()).length).to.equal(0);
@@ -61,7 +79,7 @@ describe("Store", function () {
       });
 
       it("Should be possible to change the owner of the store", async function () {
-        const store = await loadFixture(deployEmptyStoreFixture);
+        await loadFixture(deployEmptyStoreFixture);
         const [firstOwner, secondOwner] = await ethers.getSigners();
 
         expect(await store.owner()).to.equal(firstOwner.address);
@@ -72,34 +90,39 @@ describe("Store", function () {
 
     context("Client interactions with the store contract", async function () {
       it("Should be possible to buy product. State variables are changed, money are being tranfered", async function () {
-        const store = await loadFixture(fillStoreWithProducts);
+        await loadFixture(fillStoreWithProducts);
         const [, user] = await ethers.getSigners();
 
         // -- Before transaction
         expect((await store.productProperties(book)).quantity).to.equal(2);
 
+        // Approve store to spend assets on behalf of user.
+        await limeToken.connect(user).approve(await store.getAddress(), 550);
+
         // The exchange of the transfer is returned to the user.
-        await expect(
-          store.connect(user).buyProduct(book, { value: 5000 })
-        ).to.changeEtherBalances([store, user], [550, -550]);
+        await store.connect(user).buyProduct(book);
         // -- Afrter transaction
 
         expect(await store.buyers(0)).to.equal(user.address);
         expect((await store.productProperties(book)).quantity).to.equal(1);
+        expect(await limeToken.balanceOf(user)).to.equal(5000 - 550);
+        expect(await limeToken.balanceOf(store)).to.equal(550);
       });
 
       it("Should be possible to return a product in before the required time has passed", async function () {
         const store = await loadFixture(fillStoreWithProducts);
         const [, user] = await ethers.getSigners();
 
-        await store.connect(user).buyProduct(book, { value: 5000 });
+        await limeToken.connect(user).approve(await store.getAddress(), 550);
+
+        await store.connect(user).buyProduct(book);
         expect((await store.productProperties(book)).quantity).to.equal(1);
 
-        await expect(
-          store.connect(user).returnProduct(book)
-        ).to.changeEtherBalances([user, store], [550, -550]);
+        await store.connect(user).returnProduct(book);
 
         expect((await store.productProperties(book)).quantity).to.equal(2);
+        // Because returned value is only 80%
+        expect(await limeToken.balanceOf(store)).to.equal(110);
       });
 
       it("Should return correct value for get products count", async function () {
@@ -122,8 +145,10 @@ describe("Store", function () {
         const store = await loadFixture(fillStoreWithProducts);
         const [, user] = await ethers.getSigners();
 
+        await limeToken.connect(user).approve(await store.getAddress(), 550);
+
         expect((await store.getBuyers()).length).to.equal(0);
-        await store.connect(user).buyProduct(book, { value: 5000 });
+        await store.connect(user).buyProduct(book);
         expect((await store.getBuyers()).at(0)).to.equal(user.address);
       });
     });
@@ -132,7 +157,7 @@ describe("Store", function () {
   describe("Reverts", async function () {
     context("Modifiers for the special role functions", async function () {
       it("Should revert when not owner is trying to add a product", async function () {
-        const store = await loadFixture(deployEmptyStoreFixture);
+        await loadFixture(deployEmptyStoreFixture);
         const [, user] = await ethers.getSigners();
 
         await expect(
@@ -145,20 +170,23 @@ describe("Store", function () {
       "Invalid actions regarding the business requirements",
       async function () {
         it("Should revert when user is trying to buy the same product twice", async function () {
-          const store = await loadFixture(fillStoreWithProducts);
+          await loadFixture(fillStoreWithProducts);
           const [, user] = await ethers.getSigners();
 
-          await store.connect(user).buyProduct(book, { value: 5000 });
-          await expect(
-            store.connect(user).buyProduct(book, { value: 5000 })
-          ).to.be.revertedWith("Cannot buy tha same product twise");
+          await limeToken.connect(user).approve(await store.getAddress(), 1100);
+
+          await store.connect(user).buyProduct(book);
+          await expect(store.connect(user).buyProduct(book)).to.be.revertedWith(
+            "Cannot buy tha same product twise"
+          );
         });
 
         it("Should revert when user is trying to return product, when the return policy is overdue.", async function () {
-          const store = await loadFixture(fillStoreWithProducts);
+          await loadFixture(fillStoreWithProducts);
           const [, user] = await ethers.getSigners();
 
-          await store.connect(user).buyProduct(book, { value: 5000 });
+          await limeToken.connect(user).approve(await store.getAddress(), 550);
+          await store.connect(user).buyProduct(book);
 
           // Simulate passage of 100 blocks.
           for (let i = 0; i < 100; i++) {
@@ -176,7 +204,7 @@ describe("Store", function () {
 
     context("Natural logic condition", async function () {
       it("Should revert when user is trying to buy product, which does not exists", async function () {
-        const store = await loadFixture(deployEmptyStoreFixture);
+        await loadFixture(deployEmptyStoreFixture);
         const [, user] = await ethers.getSigners();
 
         await expect(
@@ -185,7 +213,7 @@ describe("Store", function () {
       });
 
       it("Should revert when user is trying to buy product with no enought money", async function () {
-        const store = await loadFixture(fillStoreWithProducts);
+        await loadFixture(fillStoreWithProducts);
         const [, user] = await ethers.getSigners();
 
         await expect(store.connect(user).buyProduct(bike)).to.be.revertedWith(
@@ -194,10 +222,11 @@ describe("Store", function () {
       });
 
       it("Should revert when user is trying to return already returned product", async function () {
-        const store = await loadFixture(fillStoreWithProducts);
+        await loadFixture(fillStoreWithProducts);
         const [, user] = await ethers.getSigners();
+        await limeToken.connect(user).approve(await store.getAddress(), 550);
 
-        await store.connect(user).buyProduct(book, { value: 5000 });
+        await store.connect(user).buyProduct(book);
         await store.connect(user).returnProduct(book);
 
         await expect(

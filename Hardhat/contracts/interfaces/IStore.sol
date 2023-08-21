@@ -31,7 +31,7 @@ interface IStore {
      * @notice  . The function to be called by the clients of the store. If there is no product with such id, not enought       quantity, or not enough money the transaction is being reverted.
      * @param   productId  . name of the product to be purchased.
      */
-    function buyProduct(string calldata productId) payable external;
+    function buyProduct(string calldata productId) external;
     
     /**
      * @notice  . The function check wether the product is valid to be returned and return it if it is.
