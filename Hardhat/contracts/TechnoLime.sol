@@ -19,25 +19,36 @@ import {StringComparator} from "./libraries/StringComparator.sol";
 
 
 
+/** 
+ * @author  . Nikola Mirchev
+ * @title   . Store
+ * @notice  . A store contract provides logic for buyers and shop manager.
+ * The manager can : add products with quantity, increase their quantity and change the manager(owner) of the store.
+ * Clients can: purchase only one quantity of given product using the native currency of the blockchain (ethers), see 
+ * the availability of the products inside the store and return products, if less time than return limit has passed.
+ */
+
 contract Store is Owner, IStore{     
     using StringComparator for string;
 
     error ProductNotFound(string productName);
 
-    // Key is the id of the product which is pointing on an existing instance with valid data.
+    /// @dev . Key is the id of the product which is pointing on an existing instance with valid data.
     mapping(string => Product) public productProperties;
   
-    // The mapping key is user address and the value a mapping in which the key is the id of the product
+    /// @dev . The mapping key is user address and the value a mapping in which the key is the id of the product
     // and the value is the timeblock in which he has purchased the product (When it is zero, the client has not bought this product)
     mapping(address => mapping(string => uint256)) public clientPurchases;
 
-    // The mapping holds information wether user has returned given product.
+    /// @dev The mapping holds information wether user has returned given product.
     mapping(address => mapping(string => bool)) private hasReturned; 
     address[] public buyers;
-    // Ids of of the products in the mapping
+    /// @dev Ids of of the products in the mapping
     string[] private productsInShop;
     
-    constructor()Owner(){}
+    constructor()Owner(){
+        /// @dev empty construtor, because we are using only the parent(owner) initializations. 
+    }
 
     function createProductOrAddQuantity(string calldata productId, uint256 quantity, uint256 price) onlyOwner external{
         if(productProperties[productId].id.compare("")){
@@ -55,21 +66,21 @@ contract Store is Owner, IStore{
 
 
     function buyProduct(string calldata productId) payable external{
-        // ------ Checks
+        /// ------ Checks
         Product memory product = productProperties[productId];
         
         if(product.id.compare("")) revert ProductNotFound(productId);
         require(product.quantity > 0 , "Not enough quantity");
-        // Haven't buy the same product before
+        /// @dev Haven't buy the same product before
         require(clientPurchases[msg.sender][productId] == 0, "Cannot buy tha same product twise");
         require(product.price <= msg.value,"Not enough money");
         
-        // ------ Change state variables
+        /// ------ Change state variables
         --productProperties[productId].quantity;
 
         clientPurchases[msg.sender][productId] = block.number;
         buyers.push(msg.sender);
-         // Return rest of the provided funds to the user.
+        /// @dev Return rest of the provided funds to the user.
         payable(msg.sender).transfer(msg.value - product.price);
 
         emit ProductHasBeenSold(productId, msg.sender);
@@ -77,21 +88,23 @@ contract Store is Owner, IStore{
 
     
     function returnProduct(string calldata productId) external{
-        // Check if msg.sender has purchased this product.
-        // Here we have invariant of always valid product
-        // If the productId is invalid or wrong, the below check will fail.
+        /// @dev Check if msg.sender has purchased this product.
+        /*  
+         Here we have invariant of always valid product
+         If the productId is invalid or wrong, the below check will fail. 
+         */
         uint256 purchasedBlock = clientPurchases[msg.sender][productId];
         require(purchasedBlock != 0, "The product has never bought");
-        // Check if the quantity which he is trying to return is not more than the purchased.
+        /// @dev Check if the quantity which he is trying to return is not more than the purchased.
        
         require(!hasReturned[msg.sender][productId], "Client has already returned the given stock");
-        // Check the block number. Less than 100 blocks from the one, in which the product was purchased.
+        /// @dev Check the block number. Less than 100 blocks from the one, in which the product was purchased.
         require(block.number - purchasedBlock < 100, "More than 100 blocks has passed from the purchase");
-        // Change state variables (Upgrade product in shop, upgrade returned quantity for the Purchase).
+        /// @dev Change state variables (Upgrade product in shop, upgrade returned quantity for the Purchase).
 
         ++productProperties[productId].quantity;
         hasReturned[msg.sender][productId] = true;
-        // Return the money to the buyer.
+        /// @dev Return the money to the buyer.
         payable(msg.sender).transfer(productProperties[productId].price);
 
         emit ProductHasBeenReturned(productId, msg.sender);
@@ -116,6 +129,4 @@ contract Store is Owner, IStore{
     function getProductAtIndex(uint256 index) view public returns(Product memory){
         return productProperties[productsInShop[index]];
     }
-
- 
 }

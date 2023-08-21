@@ -1,6 +1,15 @@
 import { HardhatUserConfig, task } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
 
+const lazyImport = async (module: any) => {
+  return await import(module);
+};
+
+task("deploy", "Deploys contracts").setAction(async () => {
+  const { main } = await lazyImport("./scripts/deploy");
+  await main();
+});
+
 const config: HardhatUserConfig = {
   solidity: {
     version: "0.8.19",
@@ -21,14 +30,5 @@ const config: HardhatUserConfig = {
     },
   },
 };
-
-const lazyImport = async (module: any) => {
-  return await import(module);
-};
-
-task("deploy", "Deploys contracts").setAction(async () => {
-  const { main } = await lazyImport("./scripts/deploy");
-  await main();
-});
 
 export default config;

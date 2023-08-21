@@ -18,18 +18,46 @@ interface IStore {
         uint256 quantity;
     }
 
-    // The function to be called only by the owner of the store. If there is already product with the given id, it's quantity is increased.
+    /**
+     * @notice  . The function to be called only by the owner of the store. 
+     * @dev     . If there is already product with the given id, the price is ignored and only it's quantity is increased.
+     * @param   productId  . name of the product
+     * @param   quantity  . to be added for this product
+     * @param   price  . for single unit of the given product
+     */
     function createProductOrAddQuantity(string calldata productId, uint256 quantity, uint256 price) external;
-    // The function to be called by the clients of the store. If there is no product with such id, not enought quantity, or not enough money the transaction is reverted.
+    
+    /**
+     * @notice  . The function to be called by the clients of the store. If there is no product with such id, not enought       quantity, or not enough money the transaction is being reverted.
+     * @param   productId  . name of the product to be purchased.
+     */
     function buyProduct(string calldata productId) payable external;
-    // The function check wether the product is valid to be returned and return it if it is.
+    
+    /**
+     * @notice  . The function check wether the product is valid to be returned and return it if it is.
+     * @dev     . If the product is does not meet requirements to be returned - the transaction has been reverted.
+     * @param   productId  . name of the product to return.
+     */
     function returnProduct(string calldata productId) external;
-    /// Next two functions are used for the iterable mapping functionallity.
+    
+    /// @dev Next two functions are used for the iterable mapping functionallity.
+    /** 
+     * @notice  . The function returns the count of all products in the store.
+     * @dev     . If the quantity for given product is 0, it is again counted.
+     * @return  . count of the products
+     */
     function getProductsCount() view external returns(uint256);
+    /**
+     * @notice  . The function returns a product at a given index in the array of products.
+     * @dev . The transaction is reverted if the index is invalid
+     * @param   index  . of the product in the array. In which place it was added.
+     * @return . the product
+     */
     function getProductAtIndex(uint256 index) view external returns(Product memory);
-    // The function return all products, which are currenlty available . 
-    // * Client can use returned data (productId) to check exact availability for given product.
-    function seeProductsInShop() view external returns(Product[] memory);
-    // The function returns collection of addresses of all users that have bought some products.
+
+    /**
+     * @notice  . The function returns collection of addresses of all users that have bought some products.
+     * @return  address[]  . all buyers.
+     */
     function getBuyers() external view returns (address[] memory);
 }
