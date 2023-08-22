@@ -331,6 +331,28 @@ describe("Store", function () {
           )
         ).to.revertedWith("ERC20Permit: invalid signature");
       });
+
+      it("Should revert when 'onBehalfOf' is zero address and signiture is invalid.", async function () {
+        await loadFixture(fillStoreWithProducts);
+        const [, userWithTokens, userWithoutTokens] = await ethers.getSigners();
+
+        const bookPrice = 550;
+        const deadline = Math.floor(Date.now()) + 3600;
+
+        const fakeSignature = await userWithTokens.signMessage(
+          "Very123good23very2nice4"
+        );
+        console.log(fakeSignature);
+        await expect(
+          store.buyProductWithSignature(
+            book,
+            ethers.ZeroAddress,
+            bookPrice,
+            deadline,
+            fakeSignature
+          )
+        ).to.revertedWith("ERC20Permit: invalid signature");
+      });
     });
   });
 });
