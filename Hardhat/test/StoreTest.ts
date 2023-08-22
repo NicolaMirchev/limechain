@@ -189,7 +189,7 @@ describe("Store", function () {
         expect((await store.getBuyers()).at(0)).to.equal(user.address);
       });
 
-      it.only("Should be possible buyer to sign transaction off-chain and other account buy a product on his behalf", async function () {
+      it("Should be possible buyer to sign transaction off-chain and other account buy a product on his behalf", async function () {
         // Prepare the signature
         await loadFixture(fillStoreWithProducts);
         const [, userWithTokens, userWithoutTokens] = await ethers.getSigners();
@@ -304,6 +304,32 @@ describe("Store", function () {
         await expect(
           store.connect(user).returnProduct(book)
         ).to.be.revertedWith("Client has already returned the given stock");
+      });
+    });
+
+    context("Signiture missmatch for the meta-transactions", async function () {
+      it("Should revert when signer of the transaction is different from the account provied for the 'onBehalf' function", async function () {
+        await loadFixture(fillStoreWithProducts);
+        const [, userWithTokens, userWithoutTokens] = await ethers.getSigners();
+
+        const bookPrice = 550;
+        const deadline = Math.floor(Date.now()) + 3600;
+
+        const signature = await prepareSignature(
+          userWithoutTokens.address,
+          bookPrice,
+          deadline
+        );
+
+        await expect(
+          store.buyProductWithSignature(
+            book,
+            userWithTokens.address,
+            bookPrice,
+            deadline,
+            signature
+          )
+        ).to.revertedWith("ERC20Permit: invalid signature");
       });
     });
   });
