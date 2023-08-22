@@ -5,6 +5,7 @@ import {Owner} from "./Owner.sol";
 import {IStore} from "./interfaces/IStore.sol";
 import {StringComparator} from "./libraries/StringComparator.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {ERC20Permit} from  "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 
 
 
@@ -47,10 +48,20 @@ contract Store is Owner, IStore{
     /// @dev Ids of of the products in the mapping
     string[] private productsInShop;
 
-    IERC20 public immutable tokenContract;
+    ERC20Permit public immutable tokenContract;
+
+    modifier buyProductChecks(string calldata productId,address buyer) {
+        Product memory product = productProperties[productId];
+        
+        if(product.id.compare("")) revert ProductNotFound(productId);
+        require(product.quantity > 0 , "Not enough quantity");
+        /// @dev Haven't buy the same product before
+        require(clientPurchases[msg.sender][productId] == 0, "Cannot buy the same product twise");
+        _;
+    }
     
     constructor(address tokenAddress)Owner(){
-        tokenContract = IERC20(tokenAddress);
+        tokenContract = ERC20Permit(tokenAddress);
     }
 
     function createProductOrAddQuantity(string calldata productId, uint256 quantity, uint256 price) onlyOwner external{
@@ -68,28 +79,27 @@ contract Store is Owner, IStore{
     }
 
 
-    function buyProduct(string calldata productId) external{
+    function buyProduct(string calldata productId) buyProductChecks(productId, msg.sender) external{
         /// ------ Checks
-        Product memory product = productProperties[productId];
-        
-        if(product.id.compare("")) revert ProductNotFound(productId);
-        require(product.quantity > 0 , "Not enough quantity");
-        /// @dev Haven't buy the same product before
-        require(clientPurchases[msg.sender][productId] == 0, "Cannot buy tha same product twise");
-
-        require(tokenContract.allowance(msg.sender, address(this)) >= product.price ,"Not enough money");
+        uint256 productPrice = productProperties[productId].price;
+        require(tokenContract.allowance(msg.sender, address(this)) >= productPrice ,"Not enough money");
         
         /// ------ Change state variables
-        --productProperties[productId].quantity;
-
-        clientPurchases[msg.sender][productId] = block.number;
-        buyers.push(msg.sender);
-        (bool success) = tokenContract.transferFrom(msg.sender, address(this), product.price);
-        require(success, "Token transfer has failed!");
-
-        emit ProductHasBeenSold(productId, msg.sender);
+        _buyProduct(productId, msg.sender, productPrice);
     }
 
+    function buyProductWithSignature(string calldata productId, address onBehalfOf, uint256 spendingAmount ,uint256 deadline,bytes calldata signature
+    )
+    buyProductChecks(productId, onBehalfOf) external{                
+         // Signed message should contrain permition from signer to this contract to spend the resources
+        (bytes32 r, bytes32 s, uint8 v) = _splitSignature(signature);
+        tokenContract.permit(onBehalfOf, address(this), spendingAmount, deadline, v, r, s);
+
+        uint256 productPrice = productProperties[productId].price;
+        require(tokenContract.allowance(onBehalfOf, address(this)) >= productPrice ,"Not enough money");
+   
+        _buyProduct(productId, onBehalfOf, productPrice);
+    }
     
     function returnProduct(string calldata productId) external{
         /// @dev Check if msg.sender has purchased this product.
@@ -127,6 +137,42 @@ contract Store is Owner, IStore{
 
     function getBuyers() external view returns (address[] memory){
         return buyers;
+    }
+
+    function _buyProduct(string calldata productId, address buyer,  uint256 price) private {
+        --productProperties[productId].quantity;
+
+        clientPurchases[buyer][productId] = block.number;
+        buyers.push(buyer);
+        (bool success) = tokenContract.transferFrom(buyer, address(this), price);
+       
+        require(success, "Token transfer has failed!");
+        emit ProductHasBeenSold(productId, buyer);
+    }
+    function _splitSignature(
+        bytes memory sig
+    ) private pure returns (bytes32 r, bytes32 s, uint8 v) {
+        require(sig.length == 65, "invalid signature length");
+
+        assembly {
+            /*
+            First 32 bytes stores the length of the signature
+
+            add(sig, 32) = pointer of sig + 32
+            effectively, skips first 32 bytes of signature
+
+            mload(p) loads next 32 bytes starting at the memory address p into memory
+            */
+
+            // first 32 bytes, after the length prefix
+            r := mload(add(sig, 32))
+            // second 32 bytes
+            s := mload(add(sig, 64))
+            // final byte (first byte of the next 32 bytes)
+            v := byte(0, mload(add(sig, 96)))
+        }
+
+        // implicitly return (r, s, v)
     }
 
     function getProductsCount() view public returns(uint256){

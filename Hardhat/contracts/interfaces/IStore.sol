@@ -32,6 +32,19 @@ interface IStore {
      * @param   productId  . name of the product to be purchased.
      */
     function buyProduct(string calldata productId) external;
+
+
+    /**
+     * @notice  . The function buy product on behalf of user, using signed message.
+     * @dev     . All passed in params should correspond to their hashed values inside the signature. If there is mismatch,
+     * the signer won't be obtained correctly.
+     * @param   productId  . id of the product
+     * @param   spendingAmount  . which the signed approve contract to use
+     * @param   deadline  . passed to the permit function
+     * @param   signature  . signed message from the original user. The message consist of permiting the contract to use 
+       original signer resources following EIP712 typeSignedHash structure. 
+     */
+    function buyProductWithSignature(string calldata productId, address onBehalfOf,uint256 spendingAmount,uint256 deadline, bytes calldata signature) external;
     
     /**
      * @notice  . The function check wether the product is valid to be returned and return it if it is.

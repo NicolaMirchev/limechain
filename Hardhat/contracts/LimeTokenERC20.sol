@@ -2,6 +2,8 @@
 pragma solidity ^0.8.9;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
+import {ERC20Permit} from  "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
+
 import {Owner} from "./Owner.sol";
 
 /**
@@ -12,8 +14,8 @@ import {Owner} from "./Owner.sol";
  * @notice  . The contract implements ERC20 interface and it is used as a currency to purchase stock from the TechnoLime Store.
  */
 
-contract LimeTokenERC20 is ERC20, Owner { 
-    constructor()Owner() ERC20("LimeToken", "LMT") {}
+contract LimeTokenERC20 is ERC20, Owner, ERC20Permit { 
+    constructor()Owner() ERC20("LimeToken", "LMT") ERC20Permit("LimeToken") {}
 
     /**
      * @notice  . The owner of the contract can mint LMT tokens when he finds it appropriate.

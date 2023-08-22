@@ -5,8 +5,8 @@ import {
 import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { Store } from "../typechain-types/TechnoLime.sol";
-import { IERC20, LimeTokenERC20 } from "../typechain-types";
+import { Store } from "../typechain-types/contracts/TechnoLime.sol";
+import { IERC20, LimeTokenERC20, Owner } from "../typechain-types";
 
 describe("Store", function () {
   const bike = "bike";
@@ -15,6 +15,7 @@ describe("Store", function () {
 
   let store: Store;
   let limeToken: LimeTokenERC20;
+  let secondUserSignature;
 
   async function deployEmptyStoreFixture() {
     const comparatorLib = await ethers.deployContract("StringComparator");
@@ -46,6 +47,44 @@ describe("Store", function () {
     const [owner, user] = await ethers.getSigners();
 
     (await limeToken).mint(user, 5000);
+  }
+
+  // Helper function
+  // To use this function - Store and LimeToken should  be implemented.
+  async function prepareSignature(
+    owner: string,
+    spendingAmount: number,
+    deadline: number
+  ) {
+    const domainData = {
+      name: "LimeToken",
+      version: "1",
+      chainId: 31337,
+      verifyingContract: await limeToken.getAddress(),
+    };
+
+    const types = {
+      Permit: [
+        { name: "owner", type: "address" },
+        { name: "spender", type: "address" },
+        { name: "value", type: "uint256" },
+        { name: "nonce", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+      ],
+    };
+    const userNonce = await limeToken.nonces(owner);
+
+    const value = {
+      owner: owner,
+      spender: await store.getAddress(),
+      value: spendingAmount,
+      nonce: userNonce,
+      deadline: deadline,
+    };
+
+    return await (
+      await ethers.getSigner(owner)
+    ).signTypedData(domainData, types, value);
   }
 
   describe("Actions", async function () {
@@ -149,6 +188,41 @@ describe("Store", function () {
         await store.connect(user).buyProduct(book);
         expect((await store.getBuyers()).at(0)).to.equal(user.address);
       });
+
+      it.only("Should be possible buyer to sign transaction off-chain and other account buy a product on his behalf", async function () {
+        // Prepare the signature
+        await loadFixture(fillStoreWithProducts);
+        const [, userWithTokens, userWithoutTokens] = await ethers.getSigners();
+
+        const bookPrice = 550;
+        const deadline = Math.floor(Date.now()) + 3600;
+
+        const signature = await prepareSignature(
+          userWithTokens.address,
+          bookPrice,
+          deadline
+        );
+
+        // -- Before transaction
+        expect((await store.productProperties(book)).quantity).to.equal(2);
+
+        await expect(
+          store
+            .connect(userWithoutTokens)
+            .buyProductWithSignature(
+              book,
+              userWithTokens.address,
+              bookPrice,
+              deadline,
+              signature
+            )
+        ).to.not.be.reverted;
+
+        expect(await store.buyers(0)).to.equal(userWithTokens.address);
+        expect((await store.productProperties(book)).quantity).to.equal(1);
+        expect(await limeToken.balanceOf(userWithTokens)).to.equal(5000 - 550);
+        expect(await limeToken.balanceOf(store)).to.equal(550);
+      });
     });
   });
 
@@ -175,7 +249,7 @@ describe("Store", function () {
 
           await store.connect(user).buyProduct(book);
           await expect(store.connect(user).buyProduct(book)).to.be.revertedWith(
-            "Cannot buy tha same product twise"
+            "Cannot buy the same product twise"
           );
         });
 
