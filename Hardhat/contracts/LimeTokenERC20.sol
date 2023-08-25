@@ -15,7 +15,7 @@ import {Owner} from "./Owner.sol";
  */
 
 contract LimeTokenERC20 is ERC20, Owner, ERC20Permit { 
-    constructor()Owner() ERC20("LimeToken", "LMT") ERC20Permit("LimeToken") {}
+    constructor()Owner() ERC20("LimeToken", "LMT") ERC20Permit("LimeTokenERC20") {}
 
     /**
      * @notice  . The owner of the contract can mint LMT tokens when he finds it appropriate.

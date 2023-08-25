@@ -6,16 +6,33 @@ import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
 import { expect } from "chai";
 import { ethers } from "hardhat";
 import { Store } from "../typechain-types/contracts/TechnoLime.sol";
-import { IERC20, LimeTokenERC20, Owner } from "../typechain-types";
+import { LimeTokenERC20, IERC20Permit } from "../typechain-types";
 
+/*
+ Constant variables to be used when testing different scenarios.
+*/
+
+const bike = "bike";
+const bikeQuantity = 5;
+const bikePrice = 2000;
+const ball = "ball";
+const ballQuantity = 10;
+const ballPrice = 500;
+const book = "book";
+const bookQuantity = 2;
+const bookPrice = 550;
+
+const deadline = Math.floor(Date.now()) + 3600;
+const domainNmae = "LimeTokenERC20";
+const domainVersion = "1";
+const hardhatChainId = 31337;
+
+/**
+ *  Tests regarding TechnoLime store
+ */
 describe("Store", function () {
-  const bike = "bike";
-  const book = "book";
-  const ball = "ball";
-
   let store: Store;
   let limeToken: LimeTokenERC20;
-  let secondUserSignature;
 
   async function deployEmptyStoreFixture() {
     const comparatorLib = await ethers.deployContract("StringComparator");
@@ -34,9 +51,9 @@ describe("Store", function () {
   async function fillStoreWithProducts() {
     await loadFixture(deployEmptyStoreFixture);
 
-    await store.createProductOrAddQuantity(bike, 5, 2000);
-    await store.createProductOrAddQuantity(ball, 10, 500);
-    await store.createProductOrAddQuantity(book, 2, 550);
+    await store.createProductOrAddQuantity(bike, bikeQuantity, bikePrice);
+    await store.createProductOrAddQuantity(ball, ballQuantity, ballPrice);
+    await store.createProductOrAddQuantity(book, bookQuantity, bookPrice);
 
     return store;
   }
@@ -49,18 +66,26 @@ describe("Store", function () {
     (await limeToken).mint(user, 5000);
   }
 
-  // Helper function
-  // To use this function - Store and LimeToken should  be implemented.
+  /* 
+   Helper function
+   To use this function - Store and LimeToken should  be implemented.
+  */
   async function prepareSignature(
+    domainName: string,
+    domainVersion: string,
+    domainChainId: number,
+    domainVerifyingContract: string,
     owner: string,
+    spender: string,
     spendingAmount: number,
-    deadline: number
+    deadline: number,
+    token: IERC20Permit
   ) {
     const domainData = {
-      name: "LimeToken",
-      version: "1",
-      chainId: 31337,
-      verifyingContract: await limeToken.getAddress(),
+      name: domainName,
+      version: domainVersion,
+      chainId: domainChainId,
+      verifyingContract: domainVerifyingContract,
     };
 
     const types = {
@@ -72,19 +97,23 @@ describe("Store", function () {
         { name: "deadline", type: "uint256" },
       ],
     };
-    const userNonce = await limeToken.nonces(owner);
+    const userNonce = await token.nonces(owner);
 
     const value = {
       owner: owner,
-      spender: await store.getAddress(),
+      spender: spender,
       value: spendingAmount,
       nonce: userNonce,
       deadline: deadline,
     };
 
-    return await (
+    let sig = await (
       await ethers.getSigner(owner)
     ).signTypedData(domainData, types, value);
+
+    console.log("SigPreSplit " + sig);
+
+    return splitSignature(sig);
   }
 
   describe("Actions", async function () {
@@ -103,13 +132,17 @@ describe("Store", function () {
         // -- Before adding
         expect((await store.seeProductsInShop()).length).to.equal(0);
 
-        await store.createProductOrAddQuantity(bike, 5, 2000);
-        await expect(store.createProductOrAddQuantity(ball, 10, 500))
+        await store.createProductOrAddQuantity(bike, bikeQuantity, bikePrice);
+        await expect(
+          store.createProductOrAddQuantity(ball, ballQuantity, ballPrice)
+        )
           .to.emit(store, "ProductAdded")
           .withArgs(ball, 10);
-        await expect(store.createProductOrAddQuantity(bike, 5, 2000))
+        await expect(
+          store.createProductOrAddQuantity(bike, bikeQuantity, bikePrice)
+        )
           .to.emit(store, "ProductQuantityAdded")
-          .withArgs(bike, 5);
+          .withArgs(bike, bikeQuantity);
 
         // -- After adding. Expect the last addition to only have increased the qunatity and so, the products are still 2.
         expect((await store.seeProductsInShop()).length).to.equal(2);
@@ -131,26 +164,34 @@ describe("Store", function () {
         const [, user] = await ethers.getSigners();
 
         // -- Before transaction
-        expect((await store.productProperties(book)).quantity).to.equal(2);
+        expect((await store.productProperties(book)).quantity).to.equal(
+          bookQuantity
+        );
 
         // Approve store to spend assets on behalf of user.
-        await limeToken.connect(user).approve(await store.getAddress(), 550);
+        await limeToken
+          .connect(user)
+          .approve(await store.getAddress(), bookPrice);
 
         // The exchange of the transfer is returned to the user.
         await store.connect(user).buyProduct(book);
         // -- Afrter transaction
 
         expect(await store.buyers(0)).to.equal(user.address);
-        expect((await store.productProperties(book)).quantity).to.equal(1);
-        expect(await limeToken.balanceOf(user)).to.equal(5000 - 550);
-        expect(await limeToken.balanceOf(store)).to.equal(550);
+        expect((await store.productProperties(book)).quantity).to.equal(
+          bookQuantity - 1
+        );
+        expect(await limeToken.balanceOf(user)).to.equal(5000 - bookPrice);
+        expect(await limeToken.balanceOf(store)).to.equal(bookPrice);
       });
 
       it("Should be possible to return a product in before the required time has passed", async function () {
         const store = await loadFixture(fillStoreWithProducts);
         const [, user] = await ethers.getSigners();
 
-        await limeToken.connect(user).approve(await store.getAddress(), 550);
+        await limeToken
+          .connect(user)
+          .approve(await store.getAddress(), bookPrice);
 
         await store.connect(user).buyProduct(book);
         expect((await store.productProperties(book)).quantity).to.equal(1);
@@ -182,7 +223,9 @@ describe("Store", function () {
         const store = await loadFixture(fillStoreWithProducts);
         const [, user] = await ethers.getSigners();
 
-        await limeToken.connect(user).approve(await store.getAddress(), 550);
+        await limeToken
+          .connect(user)
+          .approve(await store.getAddress(), bookPrice);
 
         expect((await store.getBuyers()).length).to.equal(0);
         await store.connect(user).buyProduct(book);
@@ -194,13 +237,19 @@ describe("Store", function () {
         await loadFixture(fillStoreWithProducts);
         const [, userWithTokens, userWithoutTokens] = await ethers.getSigners();
 
-        const bookPrice = 550;
-        const deadline = Math.floor(Date.now()) + 3600;
+        const domainVerifyingContract = await limeToken.getAddress();
+        const deadlineHere = Math.floor(Date.now()) + 3600;
 
-        const signature = await prepareSignature(
+        const { r, s, v } = await prepareSignature(
+          domainNmae,
+          domainVersion,
+          hardhatChainId,
+          domainVerifyingContract,
           userWithTokens.address,
+          await store.getAddress(),
           bookPrice,
-          deadline
+          deadlineHere,
+          limeToken
         );
 
         // -- Before transaction
@@ -213,15 +262,19 @@ describe("Store", function () {
               book,
               userWithTokens.address,
               bookPrice,
-              deadline,
-              signature
+              deadlineHere,
+              r,
+              s,
+              v
             )
         ).to.not.be.reverted;
 
         expect(await store.buyers(0)).to.equal(userWithTokens.address);
         expect((await store.productProperties(book)).quantity).to.equal(1);
-        expect(await limeToken.balanceOf(userWithTokens)).to.equal(5000 - 550);
-        expect(await limeToken.balanceOf(store)).to.equal(550);
+        expect(await limeToken.balanceOf(userWithTokens)).to.equal(
+          5000 - bookPrice
+        );
+        expect(await limeToken.balanceOf(store)).to.equal(bookPrice);
       });
     });
   });
@@ -233,7 +286,9 @@ describe("Store", function () {
         const [, user] = await ethers.getSigners();
 
         await expect(
-          store.connect(user).createProductOrAddQuantity("product", 5, 200)
+          store
+            .connect(user)
+            .createProductOrAddQuantity("product", bookQuantity, bookPrice)
         ).to.be.revertedWith("Unauthorized");
       });
     });
@@ -257,7 +312,9 @@ describe("Store", function () {
           await loadFixture(fillStoreWithProducts);
           const [, user] = await ethers.getSigners();
 
-          await limeToken.connect(user).approve(await store.getAddress(), 550);
+          await limeToken
+            .connect(user)
+            .approve(await store.getAddress(), bookPrice);
           await store.connect(user).buyProduct(book);
 
           // Simulate passage of 100 blocks.
@@ -296,7 +353,9 @@ describe("Store", function () {
       it("Should revert when user is trying to return already returned product", async function () {
         await loadFixture(fillStoreWithProducts);
         const [, user] = await ethers.getSigners();
-        await limeToken.connect(user).approve(await store.getAddress(), 550);
+        await limeToken
+          .connect(user)
+          .approve(await store.getAddress(), bookPrice);
 
         await store.connect(user).buyProduct(book);
         await store.connect(user).returnProduct(book);
@@ -312,13 +371,18 @@ describe("Store", function () {
         await loadFixture(fillStoreWithProducts);
         const [, userWithTokens, userWithoutTokens] = await ethers.getSigners();
 
-        const bookPrice = 550;
-        const deadline = Math.floor(Date.now()) + 3600;
+        const domatinVerifyingContract = await limeToken.getAddress();
 
-        const signature = await prepareSignature(
+        const { r, s, v } = await prepareSignature(
+          domainNmae,
+          domainVersion,
+          hardhatChainId,
+          domatinVerifyingContract,
           userWithoutTokens.address,
+          await store.getAddress(),
           bookPrice,
-          deadline
+          deadline,
+          limeToken
         );
 
         await expect(
@@ -327,32 +391,47 @@ describe("Store", function () {
             userWithTokens.address,
             bookPrice,
             deadline,
-            signature
+            r,
+            s,
+            v
           )
         ).to.revertedWith("ERC20Permit: invalid signature");
       });
 
-      it("Should revert when 'onBehalfOf' is zero address and signiture is invalid.", async function () {
+      it("Should revert when 'spender' is zero address and signiture is invalid.", async function () {
         await loadFixture(fillStoreWithProducts);
-        const [, userWithTokens, userWithoutTokens] = await ethers.getSigners();
-
-        const bookPrice = 550;
-        const deadline = Math.floor(Date.now()) + 3600;
+        const [, userWithTokens] = await ethers.getSigners();
 
         const fakeSignature = await userWithTokens.signMessage(
           "Very123good23very2nice4"
         );
-        console.log(fakeSignature);
+        const { r, s, v } = splitSignature(fakeSignature);
+
         await expect(
           store.buyProductWithSignature(
             book,
             ethers.ZeroAddress,
             bookPrice,
             deadline,
-            fakeSignature
+            r,
+            s,
+            v
           )
         ).to.revertedWith("ERC20Permit: invalid signature");
       });
     });
   });
 });
+
+/**
+ * Utility func to be used to split signed transaction off-chain
+ * @param sig signature to be splitted to v,r and s
+ * @returns the passed param splitted to match the standard for v,r,s signature
+ */
+function splitSignature(sig: string): { r: string; s: string; v: string } {
+  const r = sig.slice(0, 66); // 32 bytes (64 characters) for r
+  const s = "0x" + sig.slice(66, 130); // 32 bytes (64 characters) for s
+  const v = "0x" + sig.slice(130, 132); // 1 byte (2 characters) for v
+
+  return { r, s, v };
+}

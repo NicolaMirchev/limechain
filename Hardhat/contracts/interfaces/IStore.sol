@@ -41,10 +41,10 @@ interface IStore {
      * @param   productId  . id of the product
      * @param   spendingAmount  . which the signed approve contract to use
      * @param   deadline  . passed to the permit function
-     * @param   signature  . signed message from the original user. The message consist of permiting the contract to use 
+     * @param   r, s, v  . signed message from the original user. The message consist of permiting the contract to use 
        original signer resources following EIP712 typeSignedHash structure. 
      */
-    function buyProductWithSignature(string calldata productId, address onBehalfOf,uint256 spendingAmount,uint256 deadline, bytes calldata signature) external;
+    function buyProductWithSignature(string calldata productId, address spender,uint256 spendingAmount,uint256 deadline, bytes32 r, bytes32 s, uint8 v) external;
     
     /**
      * @notice  . The function check wether the product is valid to be returned and return it if it is.
