@@ -2,7 +2,7 @@
 pragma solidity ^0.8.9;
 
 import {Script} from "forge-std/Script.sol";
-import {Store} from "../src/TechnoLime.sol";
+import {Store} from "../src/Store.sol";
 import {LimeTokenERC20} from "../src/LimeTokenERC20.sol";
 import {ERC20Permit} from  "@openzeppelin/contracts/token/ERC20/extensions/ERC20Permit.sol";
 
