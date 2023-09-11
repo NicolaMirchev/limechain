@@ -16,7 +16,19 @@ export function splitSignature(sig: string): {
 
   return { r, s, v };
 }
-
+/**
+ * Utility func to be used to prepare the signature off-chain. Struct is defined to match the typed data, which we use for the bridge functionallity
+ * to validate ownership of the tokens and amount.
+ * @param domainName name of the domain
+ * @param domainVersion version of the domain
+ * @param chainId chainId of the domain
+ * @param domainVerifyingContract address of the domain
+ * @param signer address of the signer
+ * @param claimer address of the claimer
+ * @param amount amount of tokens to be locked
+ * @param nonce nonce of the claimer
+ * @returns the splitted signature
+ * */
 export async function prepareSignature(
   domainName: string,
   domainVersion: string,
