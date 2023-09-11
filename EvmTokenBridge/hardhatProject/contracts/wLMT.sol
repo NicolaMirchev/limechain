@@ -16,15 +16,13 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
  */
 
 contract wLMT is ERC20Burnable, Ownable, EIP712{
-
-    bytes32 private constant MINT_TYPEHASH =
-        keccak256("Mint(address claimer,uint256 amount, uint256 nonce)");
-    
-    // @dev    . Nonces for replay protection. Key is the address, which should recieve the minted tokens. The provider signes the nonce for given address.
-    mapping(address => uint256) public nonces;
-
     event TokenClaimed(address indexed _claimer, uint256 _amount);
     event TokenBurned(address indexed _burner, uint256 _amount);
+
+    bytes32 private constant MINT_TYPEHASH =
+        keccak256("Claim(address claimer,uint256 amount,uint256 nonce)");  
+    // @dev    . Nonces for replay protection. Key is the address, which should recieve the minted tokens. The provider signes the nonce for given address.
+    mapping(address => uint256) public nonces;
     constructor() ERC20Burnable() Ownable() ERC20("Wrapped LMT", "wLMT") EIP712("Wrapped LMT", "1") {
     }
 
@@ -52,6 +50,11 @@ contract wLMT is ERC20Burnable, Ownable, EIP712{
         emit TokenClaimed(claimer, amount);
     }
 
+    /**
+     * @notice  . The function is triggered from the user, who wants to burn his wLMT tokens and unlock the original LMT tokens on the source chain.
+     * @dev     . The function will revert if the user does not have enough wLMT tokens.
+     * @param   amount  . The amount of wLMT tokens to be burned.
+     */
     function burn(uint256 amount) override public {
         super.burn(amount);
         emit TokenBurned(msg.sender, amount);

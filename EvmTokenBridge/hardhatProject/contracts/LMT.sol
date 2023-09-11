@@ -12,7 +12,7 @@ import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
  */
 
 contract LMT is ERC20, Ownable{
-    constructor() ERC20("Lime Token", "LMT") Ownable() {
+    constructor() ERC20("Lime Token", "LMT") Ownable() {   
         // Default is okay.
     }
 

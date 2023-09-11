@@ -1,17 +1,15 @@
-import {
-  time,
-  loadFixture,
-} from "@nomicfoundation/hardhat-toolbox/network-helpers";
-import { anyValue } from "@nomicfoundation/hardhat-chai-matchers/withArgs";
+import { loadFixture } from "@nomicfoundation/hardhat-toolbox/network-helpers";
 import { WLMT } from "../../typechain-types/contracts/WLMT";
 import { expect } from "chai";
 import { ethers } from "hardhat";
+import { prepareSignature } from "./Util";
 
 describe("wLMT", function () {
   let wLMTToken: WLMT;
   const domainName = "Wrapped LMT";
   const domainVersion = "1";
   const hardhatChainId = 31337;
+  const valueToBeMinted = 100;
 
   async function deploywLMTFixture() {
     const [owner, otherAccount] = await ethers.getSigners();
@@ -23,93 +21,135 @@ describe("wLMT", function () {
     return { wLMT, owner, otherAccount };
   }
 
-  async function prepareSignature(
-    domainVerifyingContract: string,
-    signer: string,
-    claimer: string,
-    amount: number
-  ) {
-    const domainData = {
-      name: domainName,
-      version: domainVersion,
-      chainId: hardhatChainId,
-      verifyingContract: domainVerifyingContract,
-    };
+  async function mintTokensFixture() {
+    const { wLMT, owner, otherAccount } = await deploywLMTFixture();
 
-    const types = {
-      Mint: [
-        { name: "claimer", type: "address" },
-        { name: "amount", type: "uint256" },
-        { name: "nonce", type: "uint256" },
-      ],
-    };
-    const claimerNonce = await wLMTToken.nonces(claimer);
+    const { r, s, v } = await prepareSignature(
+      domainName,
+      domainVersion,
+      hardhatChainId,
+      await wLMT.getAddress(),
+      await owner.getAddress(),
+      await otherAccount.getAddress(),
+      valueToBeMinted,
+      await wLMTToken.nonces(await otherAccount.getAddress())
+    );
 
-    const value = {
-      claimer: claimer,
-      amount: amount,
-      nonce: claimerNonce,
-    };
+    await wLMTToken.mintWithSignature(
+      await otherAccount.getAddress(),
+      valueToBeMinted,
+      v,
+      r,
+      s
+    );
 
-    let signature = await (
-      await ethers.getSigner(signer)
-    ).signTypedData(domainData, types, value);
-    console.log("Signature = ", signature);
-    console.log("Value = ", value);
-    console.log("Domain Data = ", domainData);
-
-    return splitSignature(signature);
-  }
-
-  /**
-   * Utility func to be used to split signed transaction off-chain
-   * @param sig signature to be splitted to v,r and s
-   * @returns the passed param splitted to match the standard for v,r,s signature
-   */
-  function splitSignature(sig: string): { r: string; s: string; v: string } {
-    const r = sig.slice(0, 66); // 32 bytes (64 characters) for r
-    const s = "0x" + sig.slice(66, 130); // 32 bytes (64 characters) for s
-    const v = "0x" + sig.slice(130, 132); // 1 byte (2 characters) for v
-
-    return { r, s, v };
+    return { wLMT, owner, otherAccount, r, s, v };
   }
 
   describe("Actions", function () {
-    it("Should set the right owner", async function () {
-      const { wLMT, owner, otherAccount } = await deploywLMTFixture();
+    context("Deployment", function () {
+      it("Should set the right owner", async function () {
+        const { wLMT, owner, otherAccount } = await deploywLMTFixture();
 
-      expect(await (wLMT as any).owner()).to.equal(owner.address);
+        expect(await (wLMT as any).owner()).to.equal(owner.address);
+      });
     });
-    it("Should be possible to mint tokens to an address using signature from owner.", async function () {
-      const { wLMT, owner, otherAccount } = await deploywLMTFixture();
-      const valueToBeMinted = 1000;
 
-      const { r, s, v } = await prepareSignature(
-        await wLMT.getAddress(),
-        await owner.getAddress(),
-        await otherAccount.getAddress(),
-        valueToBeMinted
-      );
+    context("Minting", function () {
+      it("Should be possible to mint tokens to an address using signature from owner.", async function () {
+        const { wLMT, owner, otherAccount } = await deploywLMTFixture();
 
-      console.log("token address = " + (await wLMTToken.getAddress()));
-      console.log("Claimer address " + (await otherAccount.getAddress()));
-      console.log("Owner address " + (await wLMTToken.owner()));
+        const { r, s, v } = await prepareSignature(
+          domainName,
+          domainVersion,
+          hardhatChainId,
+          await wLMT.getAddress(),
+          await owner.getAddress(),
+          await otherAccount.getAddress(),
+          valueToBeMinted,
+          await wLMTToken.nonces(await otherAccount.getAddress())
+        );
 
-      expect(
-        await wLMTToken
-          .connect(otherAccount)
-          .mintWithSignature(
-            await otherAccount.getAddress(),
-            valueToBeMinted,
-            v,
-            r,
-            s
-          )
-      )
-        .to.emit(wLMTToken, "TokenClaimed")
-        .withArgs(otherAccount.address, 1000);
+        expect(
+          await wLMTToken
+            .connect(otherAccount)
+            .mintWithSignature(
+              await otherAccount.getAddress(),
+              valueToBeMinted,
+              v,
+              r,
+              s
+            )
+        )
+          .to.emit(wLMTToken, "TokenClaimed")
+          .withArgs(otherAccount.address, 1000);
+      });
+    });
+
+    context("Burning", function () {
+      it("Should be possible to burn tokens for user, who has previously minted.", async function () {
+        const { wLMT, owner, otherAccount } = await mintTokensFixture();
+        // Burn toknes
+
+        expect(await wLMTToken.connect(otherAccount).burn(valueToBeMinted))
+          .to.emit(wLMTToken, "TokenBurned")
+          .withArgs(otherAccount.address, valueToBeMinted);
+      });
     });
   });
+  describe("Reverts", function () {
+    context("Minting", function () {
+      it("Should revert if signature is from wrong signer", async function () {
+        const { wLMT, owner, otherAccount } = await deploywLMTFixture();
 
-  describe("Reverts", function () {});
+        const { r, s, v } = await prepareSignature(
+          domainName,
+          domainVersion,
+          hardhatChainId,
+          await wLMT.getAddress(),
+          await otherAccount.getAddress(),
+          await otherAccount.getAddress(),
+          valueToBeMinted,
+          await wLMTToken.nonces(await otherAccount.getAddress())
+        );
+
+        await expect(
+          wLMTToken
+            .connect(otherAccount)
+            .mintWithSignature(
+              await otherAccount.getAddress(),
+              valueToBeMinted,
+              v,
+              r,
+              s
+            )
+        ).to.be.revertedWith("wLMT Mint: Invalid signature");
+      });
+      it("Should revert if signature same signature is used two times", async function () {
+        const { wLMT, owner, otherAccount, r, s, v } =
+          await mintTokensFixture();
+
+        await expect(
+          wLMTToken
+            .connect(otherAccount)
+            .mintWithSignature(
+              await otherAccount.getAddress(),
+              valueToBeMinted,
+              v,
+              r,
+              s
+            )
+        ).to.be.revertedWith("wLMT Mint: Invalid signature");
+      });
+    });
+    context("Burning", function () {
+      it("Should revert if user tries to burn more tokens than he has", async function () {
+        const { wLMT, owner, otherAccount } = await mintTokensFixture();
+
+        await expect(
+          wLMTToken.connect(otherAccount).burn(valueToBeMinted + 1)
+        ).to.be.revertedWith("ERC20: burn amount exceeds balance");
+      });
+    });
+  });
 });
