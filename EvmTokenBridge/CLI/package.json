@@ -13,11 +13,14 @@
   "keywords": [
     "cli"
   ],
+  "type": "module",
   "author": "Nikola Mirchev",
   "license": "ISC",
   "dependencies": {
+    "@truffle/contract": "^4.6.30",
     "@truffle/hdwallet-provider": "^2.1.15",
     "dotenv": "^16.3.1",
+    "ethers": "^6.7.1",
     "web3": "^4.1.1",
     "yargs": "^17.7.2"
   }
