@@ -33,6 +33,14 @@ TokenBurned
 Indexer should be able to parse these events
 Parsed events should be stored in DB
 
+HOW TO USE IT LOCALLY?
+
+1. Enter /CLI
+2. Run npm install .
+3. Use cli command "bridge" after cli command "npx"
+
+- Example: "npx bridge lock 200"
+
 ## API
 
 All endpoints should have proper input validation and error handling
