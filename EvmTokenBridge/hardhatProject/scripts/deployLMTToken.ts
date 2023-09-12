@@ -5,7 +5,13 @@ export async function main() {
   const contract = await ethers.deployContract("LMT");
   await contract.waitForDeployment();
 
-  console.log(`Token has been deployed on ${await contract.getAddress()}}`);
+  const bridge = await ethers.deployContract("LMTBridge", [
+    await contract.getAddress(),
+  ]);
+  await bridge.waitForDeployment();
+
+  console.log(`Token has been deployed on ${await contract.getAddress()}`);
+  console.log(`Bridge has been deployed on ${await bridge.getAddress()}`);
 }
 
 main().catch((error) => {
