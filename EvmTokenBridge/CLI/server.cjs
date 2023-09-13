@@ -1,54 +1,105 @@
 // server.cjs
-import("./database.js").then((module) => {
-  const database = module.database;
-  // Use database here
-});
+let database = require("./database.cjs");
 
+require("dotenv").config();
 const Contract = require("@truffle/contract");
 const WalletProvider = require("@truffle/hdwallet-provider");
-const Web3 = require("web3");
+const { Web3 } = require("web3");
 const ethers = require("ethers");
-const express = require("express");
+var express = require("express");
+const fs = require("fs");
 const app = express();
 
-const SEPOLIA_RPC_URL = process.env.SEPOLIA_RPC_URL;
-const MUMBAI_RPC_URL = process.env.MUMBAI_RPC_URL;
+// ------ Environment config ------
+const SEPOLIA_RPC_WEB_SOCKET = process.env.SEPOLIA_WEB_SOCKET;
+const MUMBAI_RPC_WEB_SOCKET = process.env.MUMBAI_WEB_SOCKET;
 const SOURCE_TOKEN_ADDRESS = process.env.CONTRACT_ADDRESS;
 const BRIDGE_ADDRESS = process.env.BRIDGE_ADDRESS;
 const DESTINATION_TOKEN_ADDRESS = process.env.DESTINATION_TOKEN_ADDRESS;
-const web3sepolia = new Web3(SEPOLIA_RPC_URL);
-const web3mumbai = new Web3(MUMBAI_RPC_URL);
-
 const port = process.env.PORT || 3000;
 
+// ------ Web3 config ------
+const abiPath = "../hardhatProject/artifacts/contracts";
+const rawDataBridgeContract = fs.readFileSync(
+  abiPath + "/LMTBridge.sol/LMTBridge.json"
+);
+const bridgeAbi = JSON.parse(rawDataBridgeContract).abi;
+const sepoliaProvider = new ethers.WebSocketProvider(SEPOLIA_RPC_WEB_SOCKET);
+const bridgeContract = new ethers.Contract(
+  BRIDGE_ADDRESS,
+  bridgeAbi,
+  sepoliaProvider
+);
+
+// ------ Event listeners ------
+// Source chain
+bridgeContract.on("TokenLocked", (user, amount, event) => {
+  // Here we should sign a transaction to mint tokens on the destination chain from the provider and return the signature.
+  const eventDataObject = {
+    user: user,
+    amount: amount,
+  };
+  try {
+    database["Locked"].push(eventDataObject);
+  } catch (error) {
+    console.log("Errror trying to input event data into db: " + error);
+  }
+  console.log("Locked event: ", user, amount);
+});
+// ------ Event listeners ------
+bridgeContract.on("TokenReleased", (user, amount, event) => {
+  // Here we should sign a transaction to unlock tokens on the source chain .
+  const eventDataObject = {
+    user: user,
+    amount: amount,
+  };
+  try {
+    database["Locked"].push(eventDataObject);
+  } catch (error) {
+    console.log("Errror trying to input event data into db: " + error);
+  }
+  console.log("Locked event: ", user, amount);
+});
+
+// Destination chain
+const rawDatawLMTContract = fs.readFileSync(abiPath + "/wLMT.sol/wLMT.json");
+const wLMTAbi = JSON.parse(rawDatawLMTContract).abi;
+const mumbaiProvider = new ethers.WebSocketProvider(MUMBAI_RPC_WEB_SOCKET);
+const wLMTContract = new ethers.Contract(
+  DESTINATION_TOKEN_ADDRESS,
+  wLMTAbi,
+  mumbaiProvider
+);
+wLMTContract.on("TokenClaimed", (user, amount, event) => {
+  const eventDataObject = {
+    user: user,
+    amount: amount,
+  };
+  try {
+    database["Claimed"].push(eventDataObject);
+  } catch (error) {
+    console.log("Errror trying to input event data into db: " + error);
+  }
+  console.log("Claimed event: ", user, amount);
+});
+wLMTContract.on("TokenBurned", (user, amount, event) => {
+  const eventDataObject = {
+    user: user,
+    amount: amount,
+  };
+  try {
+    database["Burned"].push(eventDataObject);
+  } catch (error) {
+    console.log("Errror trying to input event data into db: " + error);
+  }
+  console.log("Burned event: ", user, amount);
+});
+
+// ------ API endpoints ------
 app.get("/", (req, res) => {
   res.send("Running!");
 });
 
 app.listen(port, () => {
-  execute();
+  console.log("App is running on port: ", port);
 });
-
-const execute = async () => {
-  const abiPath = path.resolve("../hardhatProject/artifacts/contracts");
-  const rawDataBridgeContract = fs.readFileSync(abiPath + "/Bridge.json");
-  const bridgeAbi = JSON.parse(rawDataBridgeContract);
-
-  const contract = Contract({ abi: bridgeAbi });
-  const provider = new WalletProvider(
-    process.env.PROVIDER_KEY,
-    SEPOLIA_RPC_URL
-  );
-  contract.setProvider(provider);
-  const contractInstance = await contract.at(BRIDGE_ADDRESS);
-
-  contractInstance.on("TokenLocked", (user, amount, event) => {
-    // Here we should sign a transaction to mint tokens on the destination chain from the provider and return the signature.
-    const eventDataObject = {
-      user: user,
-      amount: amount,
-    };
-    database.Locked.push(eventDataObject);
-    console.log("Locked event: ", user, amount, event);
-  });
-};

@@ -1,4 +1,4 @@
-export let database = {
+let database = {
   Claims: [],
   Locked: [],
   Released: [],
