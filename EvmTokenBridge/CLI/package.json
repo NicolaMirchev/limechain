@@ -21,6 +21,8 @@
     "@truffle/hdwallet-provider": "^2.1.15",
     "dotenv": "^16.3.1",
     "ethers": "^6.7.1",
+    "firebase": "^10.4.0",
+    "firebase-admin": "^11.10.1",
     "web3": "^4.1.1",
     "yargs": "^17.7.2"
   }

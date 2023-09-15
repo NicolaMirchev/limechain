@@ -8,18 +8,18 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 contract LMTBridge is Ownable, EIP712{  
-    event TokenLocked(address indexed user,uint256 indexed amount);
-    event TokenReleased(address indexed user, uint256 indexed amount);
+    event TokenLocked(address indexed destinationChainTokenAddress, address indexed user,uint256 amount);
+    event TokenReleased(address indexed token,address indexed user , uint256 amount);
 
     bytes32 private constant UNLOCK_TYPEHASH =
         keccak256("Claim(address claimer,uint256 amount,uint256 nonce)");
-    // @dev Key is the address of a user and the value is the corresponding amount locked in the bridge contract.
-    mapping(address => uint256) public lockedBalances;
+    // @dev Key is the address of a user and the value is token address => amount.
+    mapping(address => mapping(address => uint256)) public lockedBalances;
     // @dev Nonces for replay protection.
     mapping(address => uint256) public nonces;
-    ERC20 public immutable lmtToken;    
-    constructor(address _lmtToken) EIP712("LMTBridge", "1") Ownable(){
-        lmtToken = ERC20(_lmtToken);
+    mapping(address => address) public destinationChainTokenAddresses;
+    
+    constructor() EIP712("LMTBridge", "1") Ownable(){
     }
 
     /**
@@ -27,13 +27,24 @@ contract LMTBridge is Ownable, EIP712{
      * @dev     . If the sender does not have enough tokens, the transaction will be reverted.
      * @param   amount  . amount of LMT tokens to be locked in the bridge contract.
      */
-    function lockTokens(uint256 amount) external{
+    function lockTokens(address tokenAddress,uint256 amount) external{
         require(amount > 0, "LMTBridge: Amount must be greater than 0");
-        lockedBalances[msg.sender]+= amount;
-       (bool result) = lmtToken.transferFrom(msg.sender, address(this), amount);
+        require(tokenAddress != address(0), "LMTBridge: Token address must not be zero");
+
+        require(destinationChainTokenAddresses[tokenAddress] != address(0), "Token not supported");
+        
+
+        lockedBalances[tokenAddress][msg.sender]+= amount;
+       (bool result) = ERC20(tokenAddress).transferFrom(msg.sender, address(this), amount);
        require(result, "LMTBridge: Transfer failed");
 
-       emit TokenLocked(msg.sender,amount);
+       emit TokenLocked(destinationChainTokenAddresses[tokenAddress], msg.sender,  amount);
+    }
+
+    function addDestinationChainToken(address tokenAddress, address destinationAddress) onlyOwner external{
+        require(tokenAddress != address(0), "LMTBridge: Token address must not be zero");
+        require(destinationAddress != address(0), "LMTBridge: Destination address must not be zero");
+        destinationChainTokenAddresses[tokenAddress] = destinationAddress;
     }
 
     /**
@@ -42,20 +53,20 @@ contract LMTBridge is Ownable, EIP712{
      * @param   amount  . of LMT tokens to be unlocked.
      * @param   user  . The address of the user, who will receive the unlocked tokens.
      */
-    function unlockTokensWithSignature(uint256 amount, address user, uint8 v, bytes32 r, bytes32 s) external{
+    function unlockTokensWithSignature(address tokenAddress, uint256 amount, address user, uint8 v, bytes32 r, bytes32 s) external{
         require(amount > 0, "LMTBridge: Amount must be greater than 0");
         require(lockedBalances[user] >= amount, "LMTBridge: Amount must be less than or equal locked balance");
 
-        bytes32 structHash  = keccak256(abi.encode(UNLOCK_TYPEHASH, user, amount, nonces[user]));
+        bytes32 structHash  = keccak256(abi.encode(UNLOCK_TYPEHASH,tokenAddress, user, amount, nonces[user]));
         nonces[user]++;
         address signer = ECDSA.recover(_hashTypedDataV4(structHash), v, r, s);
         require(signer == owner(), "LMTBridge: Invalid signature");
 
 
-        lockedBalances[user]-= amount;
-        (bool result) = lmtToken.transfer(user, amount);
+        lockedBalances[tokenAddress][user]-= amount;
+        (bool result) = ERC20(tokenAddress).transfer(user, amount);
         require(result, "LMTBridge: Transfer failed");
 
-        emit TokenReleased(user,amount);
+        emit TokenReleased(tokenAddress, user,amount);
     }
 }

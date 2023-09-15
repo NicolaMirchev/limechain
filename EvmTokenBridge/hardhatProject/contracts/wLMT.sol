@@ -16,14 +16,14 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
  */
 
 contract wLMT is ERC20Burnable, Ownable, EIP712{
-    event TokenClaimed(address indexed _claimer, uint256 _amount);
-    event TokenBurned(address indexed _burner, uint256 _amount);
+    event TokenClaimed(address indexed tokenAddress, address indexed _claimer, uint256 _amount);
+    event TokenBurned(address indexed tokenAddress, address indexed _burner, uint256 _amount);
 
     bytes32 private constant MINT_TYPEHASH =
         keccak256("Claim(address claimer,uint256 amount,uint256 nonce)");  
     // @dev    . Nonces for replay protection. Key is the address, which should recieve the minted tokens. The provider signes the nonce for given address.
     mapping(address => uint256) public nonces;
-    constructor() ERC20Burnable() Ownable() ERC20("Wrapped LMT", "wLMT") EIP712("Wrapped LMT", "1") {
+    constructor(string tokenName) ERC20Burnable() Ownable() ERC20("Wrapped " + tokenName, "w" + tokenName) EIP712("Wrapped " + tokenName, "1") {
     }
 
     /**
@@ -43,11 +43,11 @@ contract wLMT is ERC20Burnable, Ownable, EIP712{
         bytes32 digest = _hashTypedDataV4(structHash);
         
         address signer = ECDSA.recover(digest, v, r, s);
-        require(signer == owner(), "wLMT Mint: Invalid signature");
+        require(signer == owner(), "wToken Mint: Invalid signature");
  
 
         _mint(claimer, amount);
-        emit TokenClaimed(claimer, amount);
+        emit TokenClaimed(address(this), claimer, amount);
     }
 
     /**
@@ -57,6 +57,6 @@ contract wLMT is ERC20Burnable, Ownable, EIP712{
      */
     function burn(uint256 amount) override public {
         super.burn(amount);
-        emit TokenBurned(msg.sender, amount);
+        emit TokenBurned(address(this),msg.sender, amount);
     }
 }
