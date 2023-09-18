@@ -9,6 +9,7 @@ var express = require("express");
 const fs = require("fs");
 const app = express();
 const db = require("./dbConfig.cjs");
+const { number } = require("yargs");
 
 // ------ Environment config ------
 
@@ -44,43 +45,116 @@ const bridgeContract = new ethers.Contract(
 const sourceSigner = new ethers.Wallet(PROVIDER_KEY, sourceProvider);
 
 // Destination chain
-const rawDatawLMTContract = fs.readFileSync(abiPath + "/wLMT.sol/wLMT.json");
-const wLMTAbi = JSON.parse(rawDatawLMTContract).abi;
+const rawDatawLMTContract = fs.readFileSync(
+  abiPath + "/wERC20.sol/wERC20.json"
+);
+const wERC20Abi = JSON.parse(rawDatawLMTContract).abi;
 const destinationProvider = new ethers.WebSocketProvider(MUMBAI_RPC_WEB_SOCKET);
 const wLMTContract = new ethers.Contract(
   DESTINATION_TOKEN_ADDRESS,
-  wLMTAbi,
+  wERC20Abi,
   destinationProvider
 );
 const destinationSigner = new ethers.Wallet(PROVIDER_KEY, destinationProvider);
-
+const contracts = [];
 // ------ Event listeners ------
 // Source chain
-bridgeContract.on("TokenLocked", async (user, amount, event) => {
+bridgeContract.on("TokenLocked", async (token, user, amount, event) => {
   // Here we should sign a transaction to mint tokens on the destination chain from the provider and return the signature.
-  const eventDataObject = {
-    user: user,
-    amount: amount,
-  };
+
+  // If the token address is new, we should create new contract.
+  if (!contracts.some((contract) => contract.token === token)) {
+    const wERC20 = new ethers.Contract(token, wERC20Abi, destinationProvider);
+    contracts.push({ token: token, contract: wERC20 });
+
+    wERC20.on("TokenClaimed", async (claimer, amount, event) => {
+      try {
+        await db
+          .ref("users")
+          .child(user)
+          .child("bridgedAmount")
+          .transaction((currentValue) => {
+            currentValue + Number(amount);
+          });
+
+        await db
+          .ref("users")
+          .child(user)
+          .child("actionSignature")
+          .child("used")
+          .set(true);
+      } catch (error) {
+        console.log("Errror trying to input event data into db: " + error);
+      }
+      console.log("Claimed event: ", claimer, amount);
+    });
+    wERC20.on("TokenBurned", async (user, amount, event) => {
+      const { r, s, v } = await prepareSignature(
+        sourceDomainName,
+        sourceDomainVersion,
+        sepoliaChainId,
+        token,
+        // sourceTokenAddress,
+        sourceSigner,
+        user,
+        amount,
+        await bridgeContract.nonces(user)
+      );
+      try {
+        // Here we should write to db the event data.
+      } catch (error) {
+        console.log("Errror trying to input event data into db: " + error);
+      }
+    });
+  }
+  wERC20 = contracts.find((contract) => contract.token === token).contract;
+
   const { r, s, v } = await prepareSignature(
-    destinationDomainName,
+    await wERC20.name(),
     destinationDomainVersion,
     mumbaiChainId,
-    DESTINATION_TOKEN_ADDRESS,
+    token,
     destinationSigner,
     user,
     amount,
     await wLMTContract.nonces(user)
   );
   try {
-    db.database().ref("users");
+    const locked = await db
+      .ref("users")
+      .child(user)
+      .child("lockedAmount")
+      .get();
+
+    if (locked.exists()) {
+      db.ref("users")
+        .child(user)
+        .child("lockedAmount")
+        .set(locked.val() + Number(amount));
+    } else {
+      db.ref("users").child(user).child("lockedAmount").set(Number(amount));
+      db.ref("users").child(user).child("bridgedAmount").set(0);
+      db.ref("users").child(user).child("amountToBeReleased").set(0);
+    }
+
+    db.ref("users")
+      .child(user)
+      .child("actionSignature")
+      .child("used")
+      .set(false);
+    db.ref("users").child(user).child("actionSignature").child("v").set(v);
+    db.ref("users").child(user).child("actionSignature").child("r").set(r);
+    db.ref("users").child(user).child("actionSignature").child("s").set(s);
+
+    // Write data to db.
+    // Store signature to db.
   } catch (error) {
     console.log("Errror trying to input event data into db: " + error);
   }
   console.log("R, s, v ", r, s, v);
 });
 // ------ Event listeners ------
-bridgeContract.on("TokenReleased", async (user, amount, event) => {
+bridgeContract.on("TokenReleased", async (token, user, amount, event) => {
   // Here we should sign a transaction to unlock tokens on the source chain .
 
   try {
@@ -89,33 +163,6 @@ bridgeContract.on("TokenReleased", async (user, amount, event) => {
     console.log("Errror trying to input event data into db: " + error);
   }
   console.log("Locked event: ", user, amount);
-});
-
-wLMTContract.on("TokenClaimed", (user, amount, event) => {
-  try {
-    // Here we should write to db the event data.
-  } catch (error) {
-    console.log("Errror trying to input event data into db: " + error);
-  }
-  console.log("Claimed event: ", user, amount);
-});
-wLMTContract.on("TokenBurned", async (user, amount, event) => {
-  const { r, s, v } = await prepareSignature(
-    sourceDomainName,
-    sourceDomainVersion,
-    sepoliaChainId,
-    DESTINATION_TOKEN_ADDRESS,
-    sourceSigner,
-    user,
-    amount,
-    await bridgeContract.nonces(user)
-  );
-  try {
-    // Here we should write to db the event data.
-  } catch (error) {
-    console.log("Errror trying to input event data into db: " + error);
-  }
-  console.log("Burned event: ", user, amount);
 });
 
 // ------ API endpoints ------
