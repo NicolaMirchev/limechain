@@ -66,3 +66,44 @@ export async function prepareSignature(
 
   return splitSignature(signature);
 }
+
+export async function prepareSignatureRelease(
+  domainName: string,
+  domainVersion: string,
+  chainId: number,
+  domainVerifyingContract: string,
+  tokenAddress: string,
+  signer: string,
+  claimer: string,
+  amount: number,
+  nonce: bigint
+) {
+  const domainData = {
+    name: domainName,
+    version: domainVersion,
+    chainId: chainId,
+    verifyingContract: domainVerifyingContract,
+  };
+
+  const types = {
+    Claim: [
+      { name: "tokenAddress", type: "address" },
+      { name: "claimer", type: "address" },
+      { name: "amount", type: "uint256" },
+      { name: "nonce", type: "uint256" },
+    ],
+  };
+
+  const value = {
+    tokenAddress: tokenAddress,
+    claimer: claimer,
+    amount: amount,
+    nonce: nonce,
+  };
+
+  let signature = await (
+    await ethers.getSigner(signer)
+  ).signTypedData(domainData, types, value);
+
+  return splitSignature(signature);
+}

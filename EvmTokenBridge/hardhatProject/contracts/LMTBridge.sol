@@ -10,9 +10,10 @@ import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 contract LMTBridge is Ownable, EIP712{  
     event TokenLocked(address indexed destinationChainTokenAddress, address indexed user,uint256 amount);
     event TokenReleased(address indexed token,address indexed user , uint256 amount);
+    event TokenAdded(address indexed token, address indexed destinationChainTokenAddress);
 
     bytes32 private constant UNLOCK_TYPEHASH =
-        keccak256("Claim(address claimer,uint256 amount,uint256 nonce)");
+        keccak256("Claim(address tokenAddress,address claimer,uint256 amount,uint256 nonce)");
     // @dev Key is the address of a user and the value is token address => amount.
     mapping(address => mapping(address => uint256)) public lockedBalances;
     // @dev Nonces for replay protection.
@@ -31,10 +32,10 @@ contract LMTBridge is Ownable, EIP712{
         require(amount > 0, "LMTBridge: Amount must be greater than 0");
         require(tokenAddress != address(0), "LMTBridge: Token address must not be zero");
 
-        require(destinationChainTokenAddresses[tokenAddress] != address(0), "Token not supported");
+        require(destinationChainTokenAddresses[tokenAddress] != address(0), "LMTBridge: Token not supported");
         
 
-        lockedBalances[tokenAddress][msg.sender]+= amount;
+        lockedBalances[msg.sender][tokenAddress]+= amount;
        (bool result) = ERC20(tokenAddress).transferFrom(msg.sender, address(this), amount);
        require(result, "LMTBridge: Transfer failed");
 
@@ -45,6 +46,7 @@ contract LMTBridge is Ownable, EIP712{
         require(tokenAddress != address(0), "LMTBridge: Token address must not be zero");
         require(destinationAddress != address(0), "LMTBridge: Destination address must not be zero");
         destinationChainTokenAddresses[tokenAddress] = destinationAddress;
+        emit TokenAdded(tokenAddress, destinationAddress);
     }
 
     /**
@@ -55,7 +57,8 @@ contract LMTBridge is Ownable, EIP712{
      */
     function unlockTokensWithSignature(address tokenAddress, uint256 amount, address user, uint8 v, bytes32 r, bytes32 s) external{
         require(amount > 0, "LMTBridge: Amount must be greater than 0");
-        require(lockedBalances[user] >= amount, "LMTBridge: Amount must be less than or equal locked balance");
+        require(lockedBalances[user][tokenAddress] >= amount, "LMTBridge: Amount must be less than or equal locked balance");
+        require(destinationChainTokenAddresses[tokenAddress] != address(0), "Token not supported");
 
         bytes32 structHash  = keccak256(abi.encode(UNLOCK_TYPEHASH,tokenAddress, user, amount, nonces[user]));
         nonces[user]++;
@@ -63,7 +66,7 @@ contract LMTBridge is Ownable, EIP712{
         require(signer == owner(), "LMTBridge: Invalid signature");
 
 
-        lockedBalances[tokenAddress][user]-= amount;
+        lockedBalances[user][tokenAddress]-= amount;
         (bool result) = ERC20(tokenAddress).transfer(user, amount);
         require(result, "LMTBridge: Transfer failed");
 

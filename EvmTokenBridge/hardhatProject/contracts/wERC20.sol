@@ -15,7 +15,7 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
  * @notice  . The wLMT contract is a ERC20 token that is minted when LMT is deposited on the source chain and burned when LMT should be is redeemed.
  */
 
-contract wLMT is ERC20Burnable, Ownable, EIP712{
+contract wERC20 is ERC20Burnable, Ownable, EIP712{
     event TokenClaimed(address indexed tokenAddress, address indexed _claimer, uint256 _amount);
     event TokenBurned(address indexed tokenAddress, address indexed _burner, uint256 _amount);
 
@@ -23,7 +23,7 @@ contract wLMT is ERC20Burnable, Ownable, EIP712{
         keccak256("Claim(address claimer,uint256 amount,uint256 nonce)");  
     // @dev    . Nonces for replay protection. Key is the address, which should recieve the minted tokens. The provider signes the nonce for given address.
     mapping(address => uint256) public nonces;
-    constructor(string tokenName) ERC20Burnable() Ownable() ERC20("Wrapped " + tokenName, "w" + tokenName) EIP712("Wrapped " + tokenName, "1") {
+    constructor(string memory tokenName) ERC20Burnable() Ownable() ERC20(string.concat("Wrapped ", tokenName) , string.concat("w ", tokenName)) EIP712(string.concat("Wrapped ", tokenName), "1") {
     }
 
     /**

@@ -1,10 +1,11 @@
 import { LMT, LMTBridge } from "../../typechain-types/contracts";
 import { expect } from "chai";
 import { ethers } from "hardhat";
-import { prepareSignature } from "./Util";
+import { prepareSignatureRelease } from "./Util";
 
 describe("LMTBridge", function () {
   let LMTToken: LMT;
+  let lmtAddress: string;
   let LMTBridge: LMTBridge;
   const amountOfTokensToLock = 100;
   const domainName = "LMTBridge";
@@ -19,8 +20,13 @@ describe("LMTBridge", function () {
       LMTBridge.getAddress(),
       amountOfTokensToLock
     );
+    lmtAddress = await LMT.getAddress();
+    await LMTBridge.addDestinationChainToken(lmtAddress, lmtAddress);
 
-    await LMTBridge.connect(otherAccount).lockTokens(amountOfTokensToLock);
+    await LMTBridge.connect(otherAccount).lockTokens(
+      lmtAddress,
+      amountOfTokensToLock
+    );
 
     return { LMT, LMTBridge, owner, otherAccount };
   }
@@ -33,40 +39,60 @@ describe("LMTBridge", function () {
     LMTToken = LMT as LMT;
 
     const LMTBridgeFactory = await ethers.getContractFactory("LMTBridge");
-    const Bridge = await LMTBridgeFactory.deploy(await LMTToken.getAddress());
+    const Bridge = await LMTBridgeFactory.deploy();
     LMTBridge = Bridge as LMTBridge;
 
     return { LMT, LMTBridge, owner, otherAccount };
   }
 
   describe("Actions", function () {
-    context("Deployment", function () {
+    context("Deployment & Owner interactions", function () {
       it("Should be deployed with correct owner and LMT address", async function () {
         const { LMT, LMTBridge, owner } = await deployContractsFixture();
         expect(await LMTBridge.owner()).to.equal(owner.address);
-        expect(await LMTBridge.lmtToken()).to.equal(await LMT.getAddress());
+      });
+      it("Should be possible add new tokens only by owner", async function () {
+        const { LMT, LMTBridge, owner, otherAccount } =
+          await deployContractsFixture();
+
+        const address = await LMT.getAddress();
+        await expect(
+          LMTBridge.addDestinationChainToken(
+            await LMT.getAddress(),
+            await LMT.getAddress()
+          )
+        )
+          .to.emit(LMTBridge, "TokenAdded")
+          .withArgs(address, address);
       });
     });
 
     context("User locking funds", function () {
       it("Should lock tokens for the correct user", async function () {
-        const { LMT, LMTBridge, otherAccount } = await deployContractsFixture();
+        const { LMT, LMTBridge, owner, otherAccount } =
+          await deployContractsFixture();
         await LMT.mint(otherAccount.address, amountOfTokensToLock);
         await LMT.connect(otherAccount).approve(
           LMTBridge.getAddress(),
           amountOfTokensToLock
         );
+        lmtAddress = await LMT.getAddress();
+        await LMTBridge.addDestinationChainToken(lmtAddress, lmtAddress);
+
         expect(
-          await LMTBridge.connect(otherAccount).lockTokens(amountOfTokensToLock)
+          await LMTBridge.connect(otherAccount).lockTokens(
+            lmtAddress,
+            amountOfTokensToLock
+          )
         )
           .to.emit(LMTBridge, "TokensLocked")
-          .withArgs(otherAccount.address, amountOfTokensToLock);
+          .withArgs(lmtAddress, otherAccount.address, amountOfTokensToLock);
         expect(await LMT.balanceOf(await LMTBridge.getAddress())).to.equal(
           amountOfTokensToLock
         );
-        expect(await LMTBridge.lockedBalances(otherAccount.address)).to.equal(
-          amountOfTokensToLock
-        );
+        expect(
+          await LMTBridge.lockedBalances(otherAccount.address, lmtAddress)
+        ).to.equal(amountOfTokensToLock);
       });
     });
 
@@ -75,11 +101,12 @@ describe("LMTBridge", function () {
         const { LMT, LMTBridge, owner, otherAccount } =
           await lockTokensFixture();
 
-        const { v, r, s } = await prepareSignature(
+        const { v, r, s } = await prepareSignatureRelease(
           domainName,
           domainVersion,
           hardhatChainId,
           await LMTBridge.getAddress(),
+          lmtAddress,
           await LMTBridge.owner(),
           otherAccount.address,
           amountOfTokensToLock,
@@ -88,6 +115,7 @@ describe("LMTBridge", function () {
 
         expect(
           await LMTBridge.connect(otherAccount).unlockTokensWithSignature(
+            lmtAddress,
             amountOfTokensToLock,
             otherAccount,
             v,
@@ -103,16 +131,14 @@ describe("LMTBridge", function () {
 
   describe("Reverts", function () {
     context("User locking funds", function () {
-      it("Should revert if user tries to lock more than they have", async function () {
-        const { LMT, LMTBridge, otherAccount } = await deployContractsFixture();
-        await LMT.mint(otherAccount.address, amountOfTokensToLock);
-        await LMT.connect(otherAccount).approve(
-          LMTBridge.getAddress(),
-          amountOfTokensToLock + 1
-        );
+      it("Should revert if user tries to lock more than they has", async function () {
+        const { LMT, LMTBridge, otherAccount } = await lockTokensFixture();
         await expect(
-          LMTBridge.connect(otherAccount).lockTokens(amountOfTokensToLock + 1)
-        ).to.be.revertedWith("ERC20: transfer amount exceeds balance");
+          LMTBridge.connect(otherAccount).lockTokens(
+            lmtAddress,
+            amountOfTokensToLock + 1
+          )
+        ).to.be.revertedWith("ERC20: insufficient allowance");
       });
       it("Should revert if user tries to lock 0", async function () {
         const { LMT, LMTBridge, otherAccount } = await deployContractsFixture();
@@ -122,41 +148,62 @@ describe("LMTBridge", function () {
           amountOfTokensToLock
         );
         await expect(
-          LMTBridge.connect(otherAccount).lockTokens(0)
+          LMTBridge.connect(otherAccount).lockTokens(lmtAddress, 0)
         ).to.be.revertedWith("LMTBridge: Amount must be greater than 0");
       });
-    });
-    context("Unlocking funds", function () {
-      it("Should revert if owner tries to unlock 0", async function () {
+      it("Should revert if user tries to lock unsupported token", async function () {
         const { LMT, LMTBridge, otherAccount } = await deployContractsFixture();
         await LMT.mint(otherAccount.address, amountOfTokensToLock);
         await LMT.connect(otherAccount).approve(
           LMTBridge.getAddress(),
           amountOfTokensToLock
         );
-        const { v, r, s } = await prepareSignature(
+        await expect(
+          LMTBridge.connect(otherAccount).lockTokens(
+            await LMT.getAddress(),
+            amountOfTokensToLock
+          )
+        ).to.be.revertedWith("LMTBridge: Token not supported");
+      });
+    });
+    context("Unlocking funds", function () {
+      it("Should revert if owner tries to unlock 0", async function () {
+        const { LMT, LMTBridge, otherAccount } = await lockTokensFixture();
+        await LMT.connect(otherAccount).approve(
+          LMTBridge.getAddress(),
+          amountOfTokensToLock
+        );
+        const { v, r, s } = await prepareSignatureRelease(
           domainName,
           domainVersion,
           hardhatChainId,
           await LMTBridge.getAddress(),
+          lmtAddress,
           await LMTBridge.owner(),
           otherAccount.address,
           amountOfTokensToLock,
           await LMTBridge.nonces(otherAccount.address)
         );
-        await LMTBridge.connect(otherAccount).lockTokens(amountOfTokensToLock);
         await expect(
-          LMTBridge.unlockTokensWithSignature(0, otherAccount.address, v, r, s)
+          LMTBridge.unlockTokensWithSignature(
+            lmtAddress,
+            0,
+            otherAccount.address,
+            v,
+            r,
+            s
+          )
         ).to.be.revertedWith("LMTBridge: Amount must be greater than 0");
       });
       it("Should revert if wrong signer has signed the signature", async function () {
         const { LMT, LMTBridge, otherAccount } = await lockTokensFixture();
 
-        const { v, r, s } = await prepareSignature(
+        const { v, r, s } = await prepareSignatureRelease(
           domainName,
           domainVersion,
           hardhatChainId,
           await LMTBridge.getAddress(),
+          lmtAddress,
           otherAccount.address,
           otherAccount.address,
           amountOfTokensToLock,
@@ -165,6 +212,7 @@ describe("LMTBridge", function () {
 
         await expect(
           LMTBridge.connect(otherAccount).unlockTokensWithSignature(
+            lmtAddress,
             amountOfTokensToLock,
             otherAccount.address,
             v,
@@ -176,11 +224,12 @@ describe("LMTBridge", function () {
       it("Should revert if owner tries to unlock more than a user they has", async function () {
         const { LMT, LMTBridge, otherAccount } = await lockTokensFixture();
 
-        const { v, r, s } = await prepareSignature(
+        const { v, r, s } = await prepareSignatureRelease(
           domainName,
           domainVersion,
           hardhatChainId,
           await LMTBridge.getAddress(),
+          lmtAddress,
           otherAccount.address,
           otherAccount.address,
           amountOfTokensToLock + 1,
@@ -189,6 +238,7 @@ describe("LMTBridge", function () {
 
         await expect(
           LMTBridge.unlockTokensWithSignature(
+            lmtAddress,
             amountOfTokensToLock + 1,
             otherAccount.address,
             v,

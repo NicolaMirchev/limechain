@@ -14,8 +14,8 @@ describe("wLMT", function () {
   async function deploywLMTFixture() {
     const [owner, otherAccount] = await ethers.getSigners();
 
-    const wLMTFactory = await ethers.getContractFactory("wLMT");
-    const wLMT = await wLMTFactory.deploy();
+    const wLMTFactory = await ethers.getContractFactory("wERC20");
+    const wLMT = await wLMTFactory.deploy("LMT");
     wLMTToken = wLMT as WLMT;
 
     return { wLMT, owner, otherAccount };
@@ -123,7 +123,7 @@ describe("wLMT", function () {
               r,
               s
             )
-        ).to.be.revertedWith("wLMT Mint: Invalid signature");
+        ).to.be.revertedWith("wToken Mint: Invalid signature");
       });
       it("Should revert if signature same signature is used two times", async function () {
         const { wLMT, owner, otherAccount, r, s, v } =
@@ -139,7 +139,7 @@ describe("wLMT", function () {
               r,
               s
             )
-        ).to.be.revertedWith("wLMT Mint: Invalid signature");
+        ).to.be.revertedWith("wToken Mint: Invalid signature");
       });
     });
     context("Burning", function () {
