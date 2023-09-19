@@ -50,104 +50,135 @@ const rawDatawLMTContract = fs.readFileSync(
 );
 const wERC20Abi = JSON.parse(rawDatawLMTContract).abi;
 const destinationProvider = new ethers.WebSocketProvider(MUMBAI_RPC_WEB_SOCKET);
-const wLMTContract = new ethers.Contract(
-  DESTINATION_TOKEN_ADDRESS,
-  wERC20Abi,
-  destinationProvider
-);
 const destinationSigner = new ethers.Wallet(PROVIDER_KEY, destinationProvider);
 const contracts = [];
+
+const dbValues = {
+  bridgedAmount: "bridgedAmount",
+  lockedAmount: "lockedAmount",
+  releasedAmount: "releasedAmount",
+  burnedAmount: "burnedAmount",
+  actionSignature: "actionSignature",
+  used: "used",
+  v: "v",
+  r: "r",
+  s: "s",
+};
+const usersRef = db.ref("users");
 // ------ Event listeners ------
 // Source chain
 bridgeContract.on("TokenLocked", async (token, user, amount, event) => {
+  const currentUserRef = usersRef.child(user).child("tokens").child(token);
+
   // Here we should sign a transaction to mint tokens on the destination chain from the provider and return the signature.
-
+  const destinationContract =
+    await bridgeContract.destinationChainTokenAddresses(token);
   // If the token address is new, we should create new contract.
-  if (!contracts.some((contract) => contract.token === token)) {
-    const wERC20 = new ethers.Contract(token, wERC20Abi, destinationProvider);
-    contracts.push({ token: token, contract: wERC20 });
+  if (!contracts.some((contract) => contract.token === destinationContract)) {
+    const wERC20 = new ethers.Contract(
+      destinationContract,
+      wERC20Abi,
+      destinationProvider
+    );
+    contracts.push({ token: destinationContract, contract: wERC20 });
 
-    wERC20.on("TokenClaimed", async (claimer, amount, event) => {
-      try {
-        await db
-          .ref("users")
-          .child(user)
-          .child("bridgedAmount")
-          .transaction((currentValue) => {
-            currentValue + Number(amount);
-          });
+    wERC20.on(
+      "TokenClaimed",
+      async (claimedTokenAddress, claimer, amount, event) => {
+        try {
+          await currentUserRef
+            .child(dbValues.bridgedAmount)
+            .transaction((currentValue) => {
+              return currentValue + Number(amount);
+            });
 
-        await db
-          .ref("users")
-          .child(user)
-          .child("actionSignature")
-          .child("used")
-          .set(true);
-      } catch (error) {
-        console.log("Errror trying to input event data into db: " + error);
+          await currentUserRef
+            .child(dbValues.actionSignature)
+            .child(dbValues.used)
+            .set(true);
+        } catch (error) {
+          console.log("Errror trying to input event data into db: " + error);
+        }
+        console.log("Claimed event: ", claimer, amount);
       }
-      console.log("Claimed event: ", claimer, amount);
-    });
-    wERC20.on("TokenBurned", async (user, amount, event) => {
-      const { r, s, v } = await prepareSignature(
-        sourceDomainName,
-        sourceDomainVersion,
-        sepoliaChainId,
-        token,
-        // sourceTokenAddress,
-        sourceSigner,
-        user,
-        amount,
-        await bridgeContract.nonces(user)
-      );
-      try {
-        // Here we should write to db the event data.
-      } catch (error) {
-        console.log("Errror trying to input event data into db: " + error);
+    );
+    wERC20.on(
+      "TokenBurned",
+      async (burnedTokenAddress, burner, burnedAmount, event) => {
+        const { r, s, v } = await prepareSignatureUnlock(
+          sourceDomainName,
+          sourceDomainVersion,
+          sepoliaChainId,
+          BRIDGE_ADDRESS,
+          token,
+          sourceSigner,
+          burner,
+          burnedAmount,
+          await bridgeContract.nonces(burner)
+        );
+        try {
+          await currentUserRef
+            .child(dbValues.burnedAmount)
+            .transaction((currentValue) => {
+              return currentValue + Number(amount);
+            });
+          currentUserRef
+            .child(dbValues.actionSignature)
+            .child(dbValues.v)
+            .set(v);
+          currentUserRef
+            .child(dbValues.actionSignature)
+            .child(dbValues.r)
+            .set(r);
+          currentUserRef
+            .child(dbValues.actionSignature)
+            .child(dbValues.s)
+            .set(s);
+          currentUserRef
+            .child(dbValues.actionSignature)
+            .child(dbValues.used)
+            .set(false);
+        } catch (error) {
+          console.log("Errror trying to input event data into db: " + error);
+        }
       }
-    });
+    );
   }
-  wERC20 = contracts.find((contract) => contract.token === token).contract;
+  wERC20 = contracts.find(
+    (contract) => contract.token === destinationContract
+  ).contract;
 
   const { r, s, v } = await prepareSignature(
     await wERC20.name(),
     destinationDomainVersion,
     mumbaiChainId,
-    token,
+    destinationContract,
     destinationSigner,
     user,
     amount,
-    await wLMTContract.nonces(user)
+    await wERC20.nonces(user)
   );
   try {
-    const locked = await db
-      .ref("users")
-      .child(user)
-      .child("lockedAmount")
-      .get();
+    const locked = await currentUserRef.child(dbValues.lockedAmount).get();
 
     if (locked.exists()) {
-      db.ref("users")
-        .child(user)
-        .child("lockedAmount")
+      currentUserRef
+        .child(dbValues.lockedAmount)
         .set(locked.val() + Number(amount));
     } else {
-      db.ref("users").child(user).child("lockedAmount").set(Number(amount));
-      db.ref("users").child(user).child("bridgedAmount").set(0);
-      db.ref("users").child(user).child("amountToBeReleased").set(0);
+      currentUserRef.child(dbValues.lockedAmount).set(Number(amount));
+      currentUserRef.child(dbValues.bridgedAmount).set(0);
+      currentUserRef.child(dbValues.releasedAmount).set(0);
+      currentUserRef.child(dbValues.burnedAmount).set(0);
     }
 
-    db.ref("users")
-      .child(user)
-      .child("actionSignature")
-      .child("used")
+    currentUserRef
+      .child(dbValues.actionSignature)
+      .child(dbValues.used)
       .set(false);
-    db.ref("users").child(user).child("actionSignature").child("v").set(v);
-    db.ref("users").child(user).child("actionSignature").child("r").set(r);
-    db.ref("users").child(user).child("actionSignature").child("s").set(s);
-
-    // Write data to db.
-    // Store signature to db.
+    currentUserRef.child(dbValues.actionSignature).child(dbValues.v).set(v);
+    currentUserRef.child(dbValues.actionSignature).child(dbValues.r).set(r);
+    currentUserRef.child(dbValues.actionSignature).child(dbValues.s).set(s);
   } catch (error) {
     console.log("Errror trying to input event data into db: " + error);
   }
@@ -155,7 +186,11 @@ bridgeContract.on("TokenLocked", async (token, user, amount, event) => {
 });
 // ------ Event listeners ------
 bridgeContract.on("TokenReleased", async (token, user, amount, event) => {
-  // Here we should sign a transaction to unlock tokens on the source chain .
+  const currentUserRef = usersRef.child(user).child("tokens").child(token);
+  currentUserRef.child(dbValues.releasedAmount).transaction((currentValue) => {
+    return currentValue + Number(amount);
+  });
+  currentUserRef.child(dbValues.actionSignature).child(dbValues.used).set(true);
 
   try {
     // Write data to db.
@@ -166,12 +201,101 @@ bridgeContract.on("TokenReleased", async (token, user, amount, event) => {
 });
 
 // ------ API endpoints ------
-app.get("/", (req, res) => {
-  res.send("Running!");
-  db.ref("users")
-    .child("0xUserAddress")
-    .child("REalTokenAddress")
-    .set({ amountToBeReleased: 2, bridgedAmount: 0, lockedAmount: 4 });
+app.get("/for-claim", async (req, res) => {
+  //Query all users => all tokens, where tokens locked > tokens bridged
+  //Return a struct holding everything
+  const result = await usersRef.once("value", (snapshot) => {
+    const users = [];
+
+    snapshot.forEach((userSnapshot) => {
+      const user = userSnapshot.val();
+
+      // Check if the user has tokens
+      if (user.tokens) {
+        // Iterate through the user's tokens
+        Object.entries(user.tokens).forEach(([tokenId, tokenData]) => {
+          if (tokenData.bridgedAmount < tokenData.lockedAmount) {
+            users.push({
+              userId: userSnapshot.key,
+              tokenId,
+              tokenData,
+            });
+          }
+        });
+      }
+      return users;
+    });
+  });
+  res.send(result);
+});
+app.get("/for-release", async (req, res) => {
+  const result = await usersRef.once("value", (snapshot) => {
+    const users = [];
+
+    snapshot.forEach((userSnapshot) => {
+      const user = userSnapshot.val();
+
+      // Check if the user has tokens
+      if (user.tokens) {
+        // Iterate through the user's tokens
+        Object.entries(user.tokens).forEach(([tokenId, tokenData]) => {
+          if (tokenData.releasedAmount < tokenData.burnedAmount) {
+            users.push({
+              userId: userSnapshot.key,
+              tokenId,
+              tokenData,
+            });
+          }
+        });
+      }
+      return users;
+    });
+  });
+  res.send(result);
+});
+
+app.get("all-bridged/:user", async (req, res) => {
+  const user = req.params.user;
+  const result = await usersRef.once("value", (snapshot) => {
+    snapshot.forEach((userSnapshot) => {
+      if (userSnapshot.val() == user) {
+        let result = { user: userSnapshot.val() };
+        result.tokens = [];
+        if (user.tokens) {
+          // Iterate through the user's tokens
+          Object.entries(user.tokens).forEach(([tokenId, tokenData]) => {
+            if (tokenData.bridgedAmount > 0) {
+              result.tokens.push({
+                tokenId,
+              });
+            }
+          });
+        }
+        return result;
+      }
+    });
+  });
+  res.send(result);
+});
+
+app.get("all-bridged-tokens/", async (req, res) => {
+  const result = await usersRef.once("value", (snapshot) => {
+    let result = [];
+    snapshot.forEach((userSnapshot) => {
+      if (user.tokens) {
+        // Iterate through the user's tokens
+        Object.entries(user.tokens).forEach(([tokenId, tokenData]) => {
+          if (tokenData.bridgedAmount > 0) {
+            result.push({
+              tokenId,
+            });
+          }
+        });
+      }
+    });
+    return result;
+  });
+  res.send(result);
 });
 
 app.listen(port, () => {
@@ -238,5 +362,45 @@ async function prepareSignature(
   console.log("Value: ", value);
   let signature = await signer.signTypedData(domainData, types, value);
   console.log("Signature: ", signature);
+  return splitSignature(signature);
+}
+
+async function prepareSignatureUnlock(
+  domainName,
+  domainVersion,
+  chainId,
+  domainVerifyingContract,
+  tokenAddress,
+  signer,
+  claimer,
+  amount,
+  nonce
+) {
+  const domainData = {
+    name: domainName,
+    version: domainVersion,
+    chainId: chainId,
+    verifyingContract: domainVerifyingContract,
+  };
+
+  const types = {
+    Claim: [
+      { name: "tokenAddress", type: "address" },
+      { name: "claimer", type: "address" },
+      { name: "amount", type: "uint256" },
+      { name: "nonce", type: "uint256" },
+    ],
+  };
+
+  const value = {
+    tokenAddress: tokenAddress,
+    claimer: claimer,
+    amount: amount,
+    nonce: nonce,
+  };
+  console.log("Domain data: ", domainData);
+  console.log("Signer: ", signer);
+  console.log("Value: ", value);
+  let signature = await signer.signTypedData(domainData, types, value);
   return splitSignature(signature);
 }

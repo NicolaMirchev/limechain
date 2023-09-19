@@ -39,7 +39,7 @@ contract LMTBridge is Ownable, EIP712{
        (bool result) = ERC20(tokenAddress).transferFrom(msg.sender, address(this), amount);
        require(result, "LMTBridge: Transfer failed");
 
-       emit TokenLocked(destinationChainTokenAddresses[tokenAddress], msg.sender,  amount);
+       emit TokenLocked(tokenAddress, msg.sender,  amount);
     }
 
     function addDestinationChainToken(address tokenAddress, address destinationAddress) onlyOwner external{
