@@ -1,15 +1,11 @@
 // server.cjs
 
 require("dotenv").config();
-const Contract = require("@truffle/contract");
-const WalletProvider = require("@truffle/hdwallet-provider");
-const { Web3 } = require("web3");
 const ethers = require("ethers");
 var express = require("express");
 const fs = require("fs");
 const app = express();
 const db = require("./dbConfig.cjs");
-const { number } = require("yargs");
 
 // ------ Environment config ------
 
@@ -65,7 +61,19 @@ const dbValues = {
   s: "s",
 };
 const usersRef = db.ref("users");
+const sourceLastProccessedBlock = db.ref("sourceLastProccessedBlock");
+const destinationlastProccessedBlockRef = db.ref(
+  "destinationsLastProccessedBlock"
+);
+const blockSource = process.argv[2];
+const blockDestination = process.argv[3];
+
+handleEventsFromBlockSource(blockSource);
+handleEventDestinationAndConstructTokens(blockDestination);
 // ------ Event listeners ------
+
+// We can add one more event listener, which will listen for tokens added and add them to contracts[].
+// Currently, if the token is new, we first construct it and add it to the contracts[] array.
 // Source chain
 bridgeContract.on("TokenLocked", async (token, user, amount, event) => {
   const currentUserRef = usersRef.child(user).child("tokens").child(token);
@@ -75,74 +83,10 @@ bridgeContract.on("TokenLocked", async (token, user, amount, event) => {
     await bridgeContract.destinationChainTokenAddresses(token);
   // If the token address is new, we should create new contract.
   if (!contracts.some((contract) => contract.token === destinationContract)) {
-    const wERC20 = new ethers.Contract(
-      destinationContract,
-      wERC20Abi,
-      destinationProvider
-    );
-    contracts.push({ token: destinationContract, contract: wERC20 });
-
-    wERC20.on(
-      "TokenClaimed",
-      async (claimedTokenAddress, claimer, amount, event) => {
-        try {
-          await currentUserRef
-            .child(dbValues.bridgedAmount)
-            .transaction((currentValue) => {
-              return currentValue + Number(amount);
-            });
-
-          await currentUserRef
-            .child(dbValues.actionSignature)
-            .child(dbValues.used)
-            .set(true);
-        } catch (error) {
-          console.log("Errror trying to input event data into db: " + error);
-        }
-        console.log("Claimed event: ", claimer, amount);
-      }
-    );
-    wERC20.on(
-      "TokenBurned",
-      async (burnedTokenAddress, burner, burnedAmount, event) => {
-        const { r, s, v } = await prepareSignatureUnlock(
-          sourceDomainName,
-          sourceDomainVersion,
-          sepoliaChainId,
-          BRIDGE_ADDRESS,
-          token,
-          sourceSigner,
-          burner,
-          burnedAmount,
-          await bridgeContract.nonces(burner)
-        );
-        try {
-          await currentUserRef
-            .child(dbValues.burnedAmount)
-            .transaction((currentValue) => {
-              return currentValue + Number(amount);
-            });
-          currentUserRef
-            .child(dbValues.actionSignature)
-            .child(dbValues.v)
-            .set(v);
-          currentUserRef
-            .child(dbValues.actionSignature)
-            .child(dbValues.r)
-            .set(r);
-          currentUserRef
-            .child(dbValues.actionSignature)
-            .child(dbValues.s)
-            .set(s);
-          currentUserRef
-            .child(dbValues.actionSignature)
-            .child(dbValues.used)
-            .set(false);
-        } catch (error) {
-          console.log("Errror trying to input event data into db: " + error);
-        }
-      }
-    );
+    addToken(token, destinationContract);
+    await db
+      .ref("contracts")
+      .set({ source: token, destination: destinationContract });
   }
   wERC20 = contracts.find(
     (contract) => contract.token === destinationContract
@@ -182,38 +126,254 @@ bridgeContract.on("TokenLocked", async (token, user, amount, event) => {
   } catch (error) {
     console.log("Errror trying to input event data into db: " + error);
   }
+  setLastProccessedBlock("source");
   console.log("R, s, v ", r, s, v);
 });
 // ------ Event listeners ------
 bridgeContract.on("TokenReleased", async (token, user, amount, event) => {
-  const currentUserRef = usersRef.child(user).child("tokens").child(token);
-  currentUserRef.child(dbValues.releasedAmount).transaction((currentValue) => {
-    return currentValue + Number(amount);
-  });
-  currentUserRef.child(dbValues.actionSignature).child(dbValues.used).set(true);
-
   try {
+    const currentUserRef = usersRef.child(user).child("tokens").child(token);
+    currentUserRef
+      .child(dbValues.releasedAmount)
+      .transaction((currentValue) => {
+        return currentValue + Number(amount);
+      });
+    currentUserRef
+      .child(dbValues.actionSignature)
+      .child(dbValues.used)
+      .set(true);
+
     // Write data to db.
   } catch (error) {
     console.log("Errror trying to input event data into db: " + error);
   }
-  console.log("Locked event: ", user, amount);
+  setLastProccessedBlock("source");
 });
+
+async function setLastProccessedBlock(chain) {
+  let lastBlock;
+  if (chain == "source") {
+    lastBlock = await sourceProvider.getBlockNumber();
+    await sourceLastProccessedBlock.set(lastBlock);
+  } else if (chain == "destination") {
+    lastBlock = await destinationProvider.getBlockNumber();
+    await destinationlastProccessedBlockRef.set(lastBlock);
+  }
+}
+
+async function handleEventsFromBlockSource(fromSourceBlockNumber) {
+  const lastProccessedBlock = (await sourceLastProccessedBlock.get()).val();
+  if (!fromSourceBlockNumber) {
+    fromSourceBlockNumber = lastProccessedBlock;
+  }
+  const lastXblocks =
+    (await sourceProvider.getBlockNumber()) - fromSourceBlockNumber;
+  // If block number isn't provided, we get the latest block number.
+
+  const lockedEvents = await bridgeContract.queryFilter(
+    "TokenLocked",
+    -lastXblocks
+  );
+
+  const releasedEvents = await bridgeContract.queryFilter(
+    "TokenReleased",
+    -lastXblocks
+  );
+  let lockedLastBlock = 0;
+  lockedEvents.forEach(async (event) => {
+    const tokenAddress = event.args[0];
+    const user = event.args[1];
+    const amount = event.args[2];
+    if (lastProccessedBlock < event.blockNumber) {
+      lockedLastBlock = event.blockNumber;
+      await usersRef
+        .child(user)
+        .child("tokens")
+        .child(tokenAddress)
+        .child(dbValues.lockedAmount)
+        .transaction((currentValue) => {
+          return currentValue + Number(amount);
+        });
+    }
+  });
+  let releasedLastBlock = 0;
+  releasedEvents.forEach(async (event) => {
+    const tokenAddress = event.args[0];
+    const user = event.args[1];
+    const amount = event.args[2];
+    if (lastProccessedBlock < event.blockNumber) {
+      releasedLastBlock = event.blockNumber;
+      usersRef
+        .child(user)
+        .child("tokens")
+        .child(tokenAddress)
+        .child(dbValues.releasedAmount)
+        .transaction((currentValue) => {
+          return currentValue + Number(amount);
+        });
+    }
+  });
+
+  if (lockedLastBlock > 0 || releasedLastBlock > 0) {
+    db.ref("sourceLastProccessedBlock").set(
+      lockedLastBlock > releasedLastBlock ? lockedLastBlock : releasedLastBlock
+    );
+  }
+}
+
+async function handleEventsFromBlockDestination(
+  fromDestinationBlockNumber,
+  wERC20,
+  sourceTokenAddress
+) {
+  const lastProccessedBlock = (
+    await destinationlastProccessedBlockRef.get()
+  ).val();
+  // If block number isn't provided, we get the latest block number.
+  if (!fromDestinationBlockNumber) {
+    fromDestinationBlockNumber = lastProccessedBlock;
+  }
+  const lastXblocks =
+    (await sourceProvider.getBlockNumber()) - fromDestinationBlockNumber;
+
+  const claimedEvents = await wERC20.queryFilter("TokenClaimed", -lastXblocks);
+
+  const releasedEvents = await wERC20.queryFilter("TokenBurned", -lastXblocks);
+
+  let claimedLastBlock = 0;
+  claimedEvents.forEach(async (event) => {
+    const user = event.args[1];
+    const amount = event.args[2];
+    if (lastProccessedBlock < event.blockNumber) {
+      claimedLastBlock = event.blockNumber;
+      await usersRef
+        .child(user)
+        .child("tokens")
+        .child(sourceTokenAddress)
+        .child(dbValues.bridgedAmount)
+        .transaction((currentValue) => {
+          return currentValue + Number(amount);
+        });
+    }
+  });
+  let burnedLastBlock = 0;
+  releasedEvents.forEach(async (event) => {
+    const user = event.args[1];
+    const amount = event.args[2];
+    if (lastProccessedBlock < event.blockNumber) {
+      burnedLastBlock = event.blockNumber;
+      usersRef
+        .child(user)
+        .child("tokens")
+        .child(sourceTokenAddress)
+        .child(dbValues.burnedAmount)
+        .transaction((currentValue) => {
+          return currentValue + Number(amount);
+        });
+    }
+  });
+
+  if (claimedLastBlock > 0 || burnedLastBlock > 0) {
+    destinationlastProccessedBlockRef.set(
+      claimedLastBlock > burnedLastBlock ? claimedLastBlock : burnedLastBlock
+    );
+  }
+}
+async function handleEventDestinationAndConstructTokens(blockDestination) {
+  const snap = await db.ref("contracts").once("value");
+
+  snap.forEach(async (snapshot) => {
+    const { source, destination } = snap.val();
+
+    if (source && destination) {
+      const wERC20 = new ethers.Contract(
+        destination,
+        wERC20Abi,
+        destinationProvider
+      );
+      await addToken(source, destination);
+      handleEventsFromBlockDestination(blockDestination, wERC20, source);
+    }
+  });
+}
+async function addToken(sourceAddress, destinationAddress) {
+  const wERC20 = new ethers.Contract(
+    destinationAddress,
+    wERC20Abi,
+    destinationProvider
+  );
+  contracts.push({ token: destinationAddress, contract: wERC20 });
+
+  wERC20.on(
+    "TokenClaimed",
+    async (claimedTokenAddress, claimer, amount, event) => {
+      try {
+        await currentUserRef
+          .child(dbValues.bridgedAmount)
+          .transaction((currentValue) => {
+            return currentValue + Number(amount);
+          });
+
+        await currentUserRef
+          .child(dbValues.actionSignature)
+          .child(dbValues.used)
+          .set(true);
+      } catch (error) {
+        console.log("Errror trying to input event data into db: " + error);
+      }
+      console.log("Claimed event: ", claimer, amount);
+      setLastProccessedBlock("destination");
+    }
+  );
+  wERC20.on(
+    "TokenBurned",
+    async (burnedTokenAddress, burner, burnedAmount, event) => {
+      const { r, s, v } = await prepareSignatureUnlock(
+        sourceDomainName,
+        sourceDomainVersion,
+        sepoliaChainId,
+        BRIDGE_ADDRESS,
+        sourceAddress,
+        sourceSigner,
+        burner,
+        burnedAmount,
+        await bridgeContract.nonces(burner)
+      );
+      try {
+        await currentUserRef
+          .child(dbValues.burnedAmount)
+          .transaction((currentValue) => {
+            return currentValue + Number(amount);
+          });
+        currentUserRef.child(dbValues.actionSignature).child(dbValues.v).set(v);
+        currentUserRef.child(dbValues.actionSignature).child(dbValues.r).set(r);
+        currentUserRef.child(dbValues.actionSignature).child(dbValues.s).set(s);
+        currentUserRef
+          .child(dbValues.actionSignature)
+          .child(dbValues.used)
+          .set(false);
+      } catch (error) {
+        console.log("Errror trying to input event data into db: " + error);
+      }
+      setLastProccessedBlock("destination");
+    }
+  );
+}
 
 // ------ API endpoints ------
 app.get("/for-claim", async (req, res) => {
-  //Query all users => all tokens, where tokens locked > tokens bridged
-  //Return a struct holding everything
-  const result = await usersRef.once("value", (snapshot) => {
+  try {
+    const usersRefSnapshot = await usersRef.once("value");
     const users = [];
 
-    snapshot.forEach((userSnapshot) => {
+    usersRefSnapshot.forEach((userSnapshot) => {
       const user = userSnapshot.val();
 
       // Check if the user has tokens
       if (user.tokens) {
         // Iterate through the user's tokens
         Object.entries(user.tokens).forEach(([tokenId, tokenData]) => {
+          console.log("Token data: ", tokenData);
           if (tokenData.bridgedAmount < tokenData.lockedAmount) {
             users.push({
               userId: userSnapshot.key,
@@ -223,17 +383,22 @@ app.get("/for-claim", async (req, res) => {
           }
         });
       }
-      return users;
     });
-  });
-  res.send(result);
+
+    // Send the users array as a response
+    res.send(users);
+  } catch (error) {
+    console.log("Error trying to get tokens for claim: ", error);
+    // Handle the error and send an appropriate response
+    res.status(500).send("Internal Server Error");
+  }
 });
 app.get("/for-release", async (req, res) => {
-  const result = await usersRef.once("value", (snapshot) => {
+  try {
+    const userSnapshot = await usersRef.once("value");
     const users = [];
-
-    snapshot.forEach((userSnapshot) => {
-      const user = userSnapshot.val();
+    userSnapshot.forEach((snapshot) => {
+      const user = snapshot.val();
 
       // Check if the user has tokens
       if (user.tokens) {
@@ -241,27 +406,30 @@ app.get("/for-release", async (req, res) => {
         Object.entries(user.tokens).forEach(([tokenId, tokenData]) => {
           if (tokenData.releasedAmount < tokenData.burnedAmount) {
             users.push({
-              userId: userSnapshot.key,
+              userId: snapshot.key,
               tokenId,
               tokenData,
             });
           }
         });
       }
-      return users;
     });
-  });
-  res.send(result);
+    res.send(users);
+  } catch (error) {
+    console.log("Error trying to get tokens for release: ", error);
+    // Handle the error and send an appropriate response
+    res.status(500).send("Internal Server Error");
+  }
 });
 
-app.get("all-bridged/:user", async (req, res) => {
-  const user = req.params.user;
-  const result = await usersRef.once("value", (snapshot) => {
-    snapshot.forEach((userSnapshot) => {
-      if (userSnapshot.val() == user) {
-        let result = { user: userSnapshot.val() };
-        result.tokens = [];
-        if (user.tokens) {
+app.get("/all-bridged/:user", async (req, res) => {
+  try {
+    const user = req.params.user;
+    const usersSnapshot = await usersRef.once("value");
+    const result = { user: usersSnapshot.val(), tokens: [] };
+    usersSnapshot.forEach((snapshot) => {
+      if (snapshot.val() == user) {
+        if (snapshot.val().tokens) {
           // Iterate through the user's tokens
           Object.entries(user.tokens).forEach(([tokenId, tokenData]) => {
             if (tokenData.bridgedAmount > 0) {
@@ -271,17 +439,22 @@ app.get("all-bridged/:user", async (req, res) => {
             }
           });
         }
-        return result;
       }
     });
-  });
-  res.send(result);
+    res.send(result);
+  } catch (error) {
+    console.log("API error obtaining user bridged tokens" + error);
+    // Handle the error and send an appropriate response
+    res.status(500).send("Internal Server Error");
+  }
 });
 
-app.get("all-bridged-tokens/", async (req, res) => {
-  const result = await usersRef.once("value", (snapshot) => {
+app.get("/all-bridged-tokens", async (req, res) => {
+  try {
+    const userSnapshot = await usersRef.once("value");
     let result = [];
-    snapshot.forEach((userSnapshot) => {
+    userSnapshot.forEach((snapshot) => {
+      const user = snapshot.val();
       if (user.tokens) {
         // Iterate through the user's tokens
         Object.entries(user.tokens).forEach(([tokenId, tokenData]) => {
@@ -293,9 +466,13 @@ app.get("all-bridged-tokens/", async (req, res) => {
         });
       }
     });
-    return result;
-  });
-  res.send(result);
+
+    res.send(result);
+  } catch (error) {
+    console.log("Error trying to get all bridged tokens " + error);
+    // Handle the error and send an appropriate response
+    res.status(500).send("Internal Server Error");
+  }
 });
 
 app.listen(port, () => {

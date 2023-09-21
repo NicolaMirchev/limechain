@@ -8,7 +8,7 @@ import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 contract LMTBridge is Ownable, EIP712{  
-    event TokenLocked(address indexed destinationChainTokenAddress, address indexed user,uint256 amount);
+    event TokenLocked(address indexed tokenAddress, address indexed user,uint256 amount);
     event TokenReleased(address indexed token,address indexed user , uint256 amount);
     event TokenAdded(address indexed token, address indexed destinationChainTokenAddress);
 
