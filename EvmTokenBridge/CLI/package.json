@@ -4,11 +4,11 @@
   "description": "CLI tool for interacting with blockchain",
   "main": "bin/index.js",
   "bin": {
-    "bridge": "bin/index.js"
+    "bridge": "bin/index.cjs"
   },
   "scripts": {
     "test": "test",
-    "dev": "node server.js"
+    "dev": "node server.cjs"
   },
   "keywords": [
     "cli"

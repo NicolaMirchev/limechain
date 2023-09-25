@@ -12,12 +12,9 @@ const db = require("./dbConfig.cjs");
 const PROVIDER_KEY = process.env.PROVIDER_KEY;
 const SEPOLIA_RPC_WEB_SOCKET = process.env.SEPOLIA_WEB_SOCKET;
 const MUMBAI_RPC_WEB_SOCKET = process.env.MUMBAI_WEB_SOCKET;
-const SOURCE_TOKEN_ADDRESS = process.env.CONTRACT_ADDRESS;
 const BRIDGE_ADDRESS = process.env.BRIDGE_ADDRESS;
-const DESTINATION_TOKEN_ADDRESS = process.env.DESTINATION_TOKEN_ADDRESS;
 const port = process.env.PORT || 3000;
 
-const destinationDomainName = "Wrapped LMT";
 const destinationDomainVersion = "1";
 const mumbaiChainId = 80001;
 
