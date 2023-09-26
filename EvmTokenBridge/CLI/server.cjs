@@ -472,6 +472,79 @@ app.get("/all-bridged-tokens", async (req, res) => {
   }
 });
 
+app.get("/claim-all/:user/:token", async (req, res) => {
+  try {
+    let result;
+    const tokenSnapshot = usersRef
+      .child(req.params.user)
+      .child("tokens")
+      .child(req.params.token)
+      .once("value");
+    if (await tokenSnapshot.exists()) {
+      const tokenData = tokenSnapshot.val();
+      if (tokenData.bridgedAmount < tokenData.lockedAmount) {
+        const werc20 = contracts.find(
+          (contract) => contract.token === tokenData.token
+        ).contract;
+        result = await prepareSignature(
+          await werc20.name(),
+          destinationDomainVersion,
+          mumbaiChainId,
+          tokenData.token,
+          destinationSigner,
+          user,
+          tokenData.lockedAmount - tokenData.bridgedAmount,
+          await werc20.nonces(user)
+        );
+      }
+    } else {
+      res.status(404).send("Data not found");
+    }
+
+    res.send(result);
+  } catch (error) {
+    console.log("Error trying to get all bridged tokens " + error);
+    // Handle the error and send an appropriate response
+    res.status(500).send("Internal Server Error");
+  }
+});
+app.get("/release-all/:user/:token", async (req, res) => {
+  try {
+    let result;
+    const tokenSnapshot = usersRef
+      .child(req.params.user)
+      .child("tokens")
+      .child(req.params.token)
+      .once("value");
+    if (await tokenSnapshot.exists()) {
+      const tokenData = tokenSnapshot.val();
+      if (tokenData.releasedAmount < tokenData.burnedAmount) {
+        const werc20 = contracts.find(
+          (contract) => contract.token === tokenData.token
+        ).contract;
+        result = await prepareSignature(
+          await werc20.name(),
+          destinationDomainVersion,
+          mumbaiChainId,
+          tokenData.token,
+          destinationSigner,
+          user,
+          tokenData.burnedAmount - tokenData.releasedAmount,
+          await werc20.nonces(user)
+        );
+      }
+    } else {
+      res.status(404).send("Data not found");
+    }
+
+    res.send(result);
+  } catch (error) {
+    console.log("Error trying to get all bridged tokens " + error);
+    // Handle the error and send an appropriate response
+    res.status(500).send("Internal Server Error");
+  }
+});
+
 app.listen(port, () => {
   console.log("App is running on port: ", port);
 });
