@@ -143,10 +143,12 @@ app.get("/all-bridged-tokens", async (req, res) => {
 app.get("/claim-all/:user/:token", async (req, res) => {
   try {
     let result;
+    const user = req.params.user;
+    const token = req.params.token;
     const tokenSnapshot = await usersRef
-      .child(req.params.user)
+      .child(user)
       .child("tokens")
-      .child(req.params.token)
+      .child(token)
       .once("value");
     if (await tokenSnapshot.exists()) {
       const tokenData = tokenSnapshot.val();
@@ -154,10 +156,11 @@ app.get("/claim-all/:user/:token", async (req, res) => {
         const werc20 = contracts.find(
           (contract) => contract.token === tokenData.token
         ).contract;
+        const domainData = await werc20.eip712Domain();
         result = await prepareSignature(
-          await werc20.name(),
-          Number(await werc20.eip712Domain().version),
-          Number(await werc20.eip712Domain().chainId),
+          domainData.at(1),
+          Number(domainData.at(2)),
+          Number(domainData.at(3)),
           tokenData.token,
           destinationSigner,
           user,
