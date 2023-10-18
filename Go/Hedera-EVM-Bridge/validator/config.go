@@ -8,10 +8,26 @@ import (
 	"github.com/joho/godotenv"
 )
 
+const dbPath = "./db.txt";
+
 func main() {
-	configClient();
+    client := configClient();
+    db := LoadDb(dbPath);
+    if db.BridgeId == "" {
+        bridgeId := configAccount(client);
+        db.AddBridgeID(bridgeId.String());
+        db.Save(dbPath);
+    } else {
+        fmt.Println("Bridge ID already exists");
+        // Proccess topic messages, which we haven't
+    }
+
+    // See how to obtain topic ID from string id
+    // subscribeToTopic(db.TopicId, client);
+    // Start listening to topic
 }
 
+// Configure hashgraph client from .env file
 func configClient() *hedera.Client{
     err := godotenv.Load(".env")
     if err != nil {
@@ -36,6 +52,7 @@ func configClient() *hedera.Client{
     return client;
 }
 
+// Create account and return account ID
 func configAccount(client *hedera.Client) hedera.AccountID{
     newAccountPrivateKey, err := hedera.PrivateKeyGenerateEd25519()
 
@@ -63,6 +80,7 @@ func configAccount(client *hedera.Client) hedera.AccountID{
     return *bridgeId;
 }
 
+// Create topic and return topic ID
 func createTopic(client *hedera.Client) *hedera.TopicID{
     transaction := hedera.NewTopicCreateTransaction();
 
@@ -81,11 +99,12 @@ func createTopic(client *hedera.Client) *hedera.TopicID{
     return topicId;
 }
 
+// Subscribe to topic and write data to db
 func subscribeToTopic(topicID hedera.TopicID, client *hedera.Client){
     _, err := hedera.NewTopicMessageQuery().
     SetTopicID(topicID).
     Subscribe(client, func(message hedera.TopicMessage) {
-        fmt.Printf("Received message: %v\n", string(message.Contents))
+        go writeToDb(dbPath, message);
     })
 
     if err != nil {
@@ -109,4 +128,8 @@ func submitMessageToTopic(topicID hedera.TopicID, client *hedera.Client){
         // Log the transaction status
 	transactionStatus := receipt.Status
 	fmt.Println("The transaction message status " + transactionStatus.String())   
+}
+
+func writeToDb(dbPath string, message hedera.TopicMessage){
+    // Write to db
 }
