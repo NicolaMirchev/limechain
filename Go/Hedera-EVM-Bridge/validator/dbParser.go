@@ -5,8 +5,6 @@ import (
 	"os"
 )
 
-
-
 type Database struct{
 	BridgeId string `json:"bridgeId"`
 	TopicId string `json:"topicId"`
@@ -23,6 +21,9 @@ func (db *Database) AddTopicID(id string) {
 }
 func (db *Database) AddTransaction(transaction Transaction) {
 	db.Transactions = append(db.Transactions, transaction);
+}
+func (db *Database) SetLastProcessedTopic(topic string) {
+    db.LastProcceesedTopic = topic;
 }
 func (db *Database) Save(filename string) error {
     data, err := json.MarshalIndent(db, "", "    ")
