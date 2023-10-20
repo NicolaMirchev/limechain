@@ -17,10 +17,10 @@ type TransferData struct {
 }
 
 const dbPath = "./db.txt";
+var db = LoadDb(dbPath);
 
 func main() {
     client := configClient();
-    db := LoadDb(dbPath);
     var topicId hedera.TopicID;
     if db.BridgeId == "" {
         bridgeId := configAccount(client);
@@ -29,13 +29,13 @@ func main() {
         db.AddTopicID(topicId.String());
         db.Save(dbPath);
     } else {
-        fmt.Println("Bridge ID already exists");
+        fmt.Println("Bridge ID already exists.");
         topicId,_ = hedera.TopicIDFromString(db.TopicId);
-        // Proccess topic messages, which we haven't
     }
+    fmt.Printf("Bridge ID: %s\n Topic ID: %s\n", db.BridgeId, db.TopicId);
 
     // Start listening to topic
-    subscribeToTopic(topicId, client);
+    subscribeToTopic(db, topicId, client);
 
     arg := os.Args[1]
 	number, err := strconv.ParseInt(arg, 10,64)
@@ -52,6 +52,7 @@ func main() {
         }
         submitMessageToTopic(topicId, client, transfer);
     }
+    db.Save(dbPath);
 }
 
 // Configure hashgraph client from .env file
@@ -80,7 +81,7 @@ func configClient() *hedera.Client{
 }
 
 // Create account and return account ID
-func configAccount(client *hedera.Client) hedera.AccountID{
+func configAccount(client *hedera.Client) *hedera.AccountID{
     newAccountPrivateKey, err := hedera.PrivateKeyGenerateEd25519()
 
     if err != nil {
@@ -104,13 +105,14 @@ func configAccount(client *hedera.Client) hedera.AccountID{
         panic(err)
     }
     bridgeId := accountReciept.AccountID;
-    return *bridgeId;
+    return bridgeId;
 }
 
 // Create topic and return topic ID
 func createTopic(client *hedera.Client) *hedera.TopicID{
     transaction := hedera.NewTopicCreateTransaction();
-
+    
+    fmt.Println("Creating new topic.");
     txResponse, err := transaction.Execute(client);
 
     if err != nil {
@@ -144,11 +146,16 @@ func deserializeFromJSON(data []byte) (TransferData) {
 }
 
 // Subscribe to topic and write data to db
-func subscribeToTopic(topicID hedera.TopicID, client *hedera.Client){
+func subscribeToTopic(db *Database, topicID hedera.TopicID, client *hedera.Client){
     _, err := hedera.NewTopicMessageQuery().
     SetTopicID(topicID).
     Subscribe(client, func(message hedera.TopicMessage) {
-        writeToDb(dbPath, message);
+        sequenceNumber := message.SequenceNumber;
+        fmt.Printf("Received message %d:\n", sequenceNumber);
+        if db.LastProcceesedTopic < sequenceNumber {
+            fmt.Println("Writing data to db...");
+            writeToDb(db, message); 
+        }
     })
 
     if err != nil {
@@ -157,6 +164,7 @@ func subscribeToTopic(topicID hedera.TopicID, client *hedera.Client){
 }
 // Submit message to topic for corresponding trasfer which occured
 func submitMessageToTopic(topicID hedera.TopicID, client *hedera.Client, message TransferData){
+    fmt.Println("Submitting new topic message.");
     submitMessage, err := hedera.NewTopicMessageSubmitTransaction().
     SetMessage([]byte(serializeToJSON(message))).
     SetTopicID(topicID).
@@ -173,20 +181,79 @@ func submitMessageToTopic(topicID hedera.TopicID, client *hedera.Client, message
 	transactionStatus := receipt.Status
 	fmt.Println("The transaction message status " + transactionStatus.String())   
 }
-func writeToDb(dbPath string, message hedera.TopicMessage){
-    db := LoadDb(dbPath);
-    contents := message.Contents;
-
-    sequenceNumber := strconv.FormatInt(int64(message.SequenceNumber), 10);
-
+func writeToDb(db *Database, message hedera.TopicMessage){
+    sequenceNumber := message.SequenceNumber;
+    contents := message.Contents;  
     transferData := deserializeFromJSON(contents);
     transaction := Transaction{
-        TopicNumber: sequenceNumber,
+        SequenceNumber: sequenceNumber,
         From: transferData.From,
         Amount: transferData.Amount,
         SigHash: transferData.SigHash,
     }
     db.AddTransaction(transaction);
     db.SetLastProcessedTopic(sequenceNumber);
-    db.Save(dbPath);
 }
+
+
+// DB part:
+
+type Database struct{
+	BridgeId string `json:"bridgeId"`
+	TopicId string `json:"topicId"`
+	Transactions []Transaction `json:"transactions"`
+	LastProcceesedTopic uint64 `json:"lastProcessedTopic"`
+}
+
+func (db *Database) AddBridgeID(id string) {
+    db.BridgeId = id
+}
+
+func (db *Database) AddTopicID(id string) {
+	db.TopicId = id
+}
+func (db *Database) AddTransaction(transaction Transaction) {
+	db.Transactions = append(db.Transactions, transaction);
+}
+func (db *Database) SetLastProcessedTopic(topicSequence uint64) {
+    db.LastProcceesedTopic = topicSequence;
+}
+func (db *Database) Save(filename string) error {
+    data, err := json.MarshalIndent(db, "", "    ")
+    if err != nil {
+        return err
+    }
+    err = os.WriteFile(filename, data, 0644)
+    if err != nil {
+        return err
+    }
+
+    return nil
+}
+
+type Transaction struct {
+	SequenceNumber uint64 `json:"transactionId"`
+	From string `json:"from"`
+	Amount string `json:"amount"`
+	SigHash string `json:"sigHash"`
+}
+
+func LoadDb(filename string) *Database{
+    var data Database
+    fmt.Println("Loading database...");
+
+    // Try to read the file
+    file, err := os.ReadFile(filename)
+    if err != nil {
+        data = Database{}
+    }
+
+    // Try to unmarshal the JSON
+    if err := json.Unmarshal(file, &data); err != nil {
+        // If unmarshal fails, create an empty Database struct
+        data = Database{}
+    }
+
+    return &data
+}
+
