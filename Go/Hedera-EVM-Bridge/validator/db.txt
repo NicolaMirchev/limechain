@@ -1,6 +1,43 @@
 {
     "bridgeId": "0.0.5736910",
-    "topicId": "0.0.5741011",
-    "transactions": [],
-    "lastProcessedTopic": 46
+    "topicId": "0.0.5741437",
+    "transactions": [
+        {
+            "transactionId": 1,
+            "from": "0x1230",
+            "amount": "100",
+            "sigHash": "0x1231000"
+        },
+        {
+            "transactionId": 2,
+            "from": "0x1231",
+            "amount": "100",
+            "sigHash": "0x1231001"
+        },
+        {
+            "transactionId": 3,
+            "from": "0x1232",
+            "amount": "100",
+            "sigHash": "0x1231002"
+        },
+        {
+            "transactionId": 4,
+            "from": "0x1230",
+            "amount": "100",
+            "sigHash": "0x1231000"
+        },
+        {
+            "transactionId": 5,
+            "from": "0x1231",
+            "amount": "100",
+            "sigHash": "0x1231001"
+        },
+        {
+            "transactionId": 6,
+            "from": "0x1232",
+            "amount": "100",
+            "sigHash": "0x1231002"
+        }
+    ],
+    "lastProcessedTopic": 6
 }
