@@ -22,20 +22,20 @@ var db = LoadDb(dbPath);
 func main() {
     client := configClient();
     var topicId hedera.TopicID;
-    if db.BridgeId == "" {
-        bridgeId := configAccount(client);
+    if db.TopicId == "" {
         topicId = *createTopic(client);
-        db.AddBridgeID(bridgeId.String());
         db.AddTopicID(topicId.String());
-        db.Save(dbPath);
     } else {
-        fmt.Println("Bridge ID already exists.");
         topicId,_ = hedera.TopicIDFromString(db.TopicId);
     }
+    if db.BridgeId == "" {
+        bridgeId := configAccount(client);
+        db.AddBridgeID(bridgeId.String());
+    } 
     fmt.Printf("Bridge ID: %s\n Topic ID: %s\n", db.BridgeId, db.TopicId);
 
     // Start listening to topic
-    subscribeToTopic(db, topicId, client);
+    go subscribeToTopic(db, topicId, client);
 
     arg := os.Args[1]
 	number, err := strconv.ParseInt(arg, 10,64)
@@ -52,6 +52,7 @@ func main() {
         }
         submitMessageToTopic(topicId, client, transfer);
     }
+    
     db.Save(dbPath);
 }
 
@@ -175,8 +176,10 @@ func submitMessageToTopic(topicID hedera.TopicID, client *hedera.Client, message
         return
     
     }
+
+
     receipt, err := submitMessage.GetReceipt(client)
-        
+    
         // Log the transaction status
 	transactionStatus := receipt.Status
 	fmt.Println("The transaction message status " + transactionStatus.String())   
@@ -197,6 +200,8 @@ func writeToDb(db *Database, message hedera.TopicMessage){
 
 
 // DB part:
+
+
 
 type Database struct{
 	BridgeId string `json:"bridgeId"`
