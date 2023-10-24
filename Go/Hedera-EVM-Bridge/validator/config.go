@@ -57,6 +57,9 @@ func main() {
         }
         submitMessageToTopic(topicId, client, transfer);
     }
+    channel := make(chan string)
+    channel <- "done";
+
     wg.Wait();
     
     db.Save(dbPath);
